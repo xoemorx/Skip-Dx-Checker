@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="description" content="Live HF skip / DX conditions for amateur radio" />
+  <title>Skip Conditions – HF Propagation</title>
+  <link rel="manifest" href="data:application/json,{'name':'Skip Conditions','short_name':'Skip','start_url':'.','display':'standalone','background_color':'#0f172a','theme_color':'#0f172a','icons':[{'src':'data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>📡</text></svg>','sizes':'any','type':'image/svg+xml'}]}" />
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --good: #22c55e;
+      --fair: #eab308;
+      --poor: #ef4444;
+      --accent: #38bdf8;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+      padding: 16px;
+      padding-bottom: 40px;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 24px;
+      padding-top: 8px;
+    }
+
+    header h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    header .subtitle {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+
+    .status-banner {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 20px;
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    .status-banner .label {
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
+    }
+
+    .status-banner .answer {
+      font-size: 1.8rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+
+    .status-banner .detail {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .solar-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    .solar-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 8px;
+      text-align: center;
+    }
+
+    .solar-item .value {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+
+    .solar-item .label {
+      font-size: 0.7rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-top: 2px;
+    }
+
+    .section-title {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+      margin-top: 8px;
+    }
+
+    .bands {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+
+    .band-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .band-name {
+      font-weight: 600;
+      font-size: 1.05rem;
+      min-width: 90px;
+    }
+
+    .band-conditions {
+      display: flex;
+      gap: 10px;
+      flex: 1;
+      justify-content: flex-end;
+    }
+
+    .cond {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 64px;
+    }
+
+    .cond .time {
+      font-size: 0.7rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .badge.good { background: rgba(34, 197, 94, 0.2); color: var(--good); }
+    .badge.fair { background: rgba(234, 179, 8, 0.2); color: var(--fair); }
+    .badge.poor { background: rgba(239, 68, 68, 0.2); color: var(--poor); }
+    .badge.unknown { background: rgba(148, 163, 184, 0.2); color: var(--muted); }
+
+    .legend {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+
+    .legend span {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .dot.good { background: var(--good); }
+    .dot.fair { background: var(--fair); }
+    .dot.poor { background: var(--poor); }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+
+    button {
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    button:active { background: #334155; }
+    button.primary {
+      background: #0369a1;
+      border-color: #0284c7;
+    }
+    button.primary:active { background: #0284c7; }
+
+    .updated {
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .footer a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    .error-box {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 16px;
+      font-size: 0.9rem;
+      color: #fca5a5;
+      display: none;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--muted);
+    }
+
+    .spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 12px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .hint {
+      background: rgba(56, 189, 248, 0.08);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 20px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📡 Skip Conditions</h1>
+      <div class="subtitle">HF DX / Skywave Propagation</div>
+    </header>
+
+    <div id="error" class="error-box"></div>
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      Loading current conditions…
+    </div>
+
+    <div id="content" style="display:none">
+      <div class="status-banner">
+        <div class="label">Skip available?</div>
+        <div class="answer" id="main-answer">—</div>
+        <div class="detail" id="main-detail">Checking bands…</div>
+      </div>
+
+      <div class="solar-grid" id="solar-grid">
+        <!-- filled by JS -->
+      </div>
+
+      <div class="section-title">Band Conditions</div>
+      <div class="bands" id="bands">
+        <!-- filled by JS -->
+      </div>
+
+      <div class="legend">
+        <span><span class="dot good"></span> Good (skip likely)</span>
+        <span><span class="dot fair"></span> Fair</span>
+        <span><span class="dot poor"></span> Poor</span>
+      </div>
+
+      <div class="updated" id="updated"></div>
+
+      <div class="actions">
+        <button class="primary" onclick="loadData()">↻ Refresh</button>
+        <button onclick="window.open('https://www.hamqsl.com/solar.html', '_blank')">Official Source</button>
+      </div>
+
+      <div class="hint">
+        <strong>Good</strong> = skip / DX likely · 
+        <strong>Fair</strong> = possible on good paths · 
+        <strong>Poor</strong> = skip unlikely.<br>
+        Conditions are global estimates based on solar indices.
+      </div>
+    </div>
+
+    <div class="footer">
+      Data courtesy of <a href="https://www.hamqsl.com/solar.html" target="_blank">N0NBH / HamQSL</a><br>
+      Built for amateur radio operators · Add to Home Screen on Android
+    </div>
+  </div>
+
+  <script>
+    // ---------- Helpers ----------
+    function badgeClass(cond) {
+      if (!cond) return "unknown";
+      const c = cond.toLowerCase();
+      if (c === "good") return "good";
+      if (c === "fair") return "fair";
+      if (c === "poor") return "poor";
+      return "unknown";
+    }
+
+    function parseXML(xmlText) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(xmlText, "text/xml");
+      const root = doc.querySelector("solardata");
+      if (!root) throw new Error("Invalid data");
+
+      const get = (tag) => {
+        const el = root.querySelector(tag);
+        return el ? el.textContent.trim() : null;
+      };
+
+      const bands = {};
+      root.querySelectorAll("calculatedconditions band").forEach(b => {
+        const name = b.getAttribute("name");
+        const time = b.getAttribute("time");
+        if (!bands[name]) bands[name] = {};
+        bands[name][time] = b.textContent.trim();
+      });
+
+      return {
+        updated: get("updated"),
+        solarflux: get("solarflux"),
+        aindex: get("aindex"),
+        kindex: get("kindex"),
+        sunspots: get("sunspots"),
+        xray: get("xray"),
+        geomagfield: get("geomagfield"),
+        signalnoise: get("signalnoise"),
+        bands
+      };
+    }
+
+    function render(data) {
+      // Solar numbers
+      const solarGrid = document.getElementById("solar-grid");
+      solarGrid.innerHTML = `
+        <div class="solar-item"><div class="value">${data.solarflux || "—"}</div><div class="label">SFI</div></div>
+        <div class="solar-item"><div class="value">${data.kindex || "—"}</div><div class="label">K-Index</div></div>
+        <div class="solar-item"><div class="value">${data.aindex || "—"}</div><div class="label">A-Index</div></div>
+        <div class="solar-item"><div class="value">${data.sunspots || "—"}</div><div class="label">Sunspots</div></div>
+      `;
+
+      // Band order
+      const order = ["80m-40m", "30m-20m", "17m-15m", "12m-10m"];
+      const labels = {
+        "80m-40m": "80 – 40 m",
+        "30m-20m": "30 – 20 m",
+        "17m-15m": "17 – 15 m",
+        "12m-10m": "12 – 10 m"
+      };
+
+      const bandsEl = document.getElementById("bands");
+      bandsEl.innerHTML = order.map(key => {
+        const b = data.bands[key] || {};
+        const day = b.day || "—";
+        const night = b.night || "—";
+        return `
+          <div class="band-card">
+            <div class="band-name">${labels[key]}</div>
+            <div class="band-conditions">
+              <div class="cond">
+                <div class="time">Day</div>
+                <span class="badge ${badgeClass(day)}">${day}</span>
+              </div>
+              <div class="cond">
+                <div class="time">Night</div>
+                <span class="badge ${badgeClass(night)}">${night}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      // Main answer
+      const goodBands = [];
+      order.forEach(key => {
+        const b = data.bands[key] || {};
+        if ((b.day || "").toLowerCase() === "good" || (b.night || "").toLowerCase() === "good") {
+          goodBands.push(labels[key]);
+        }
+      });
+
+      const answerEl = document.getElementById("main-answer");
+      const detailEl = document.getElementById("main-detail");
+
+      if (goodBands.length >= 2) {
+        answerEl.textContent = "YES";
+        answerEl.style.color = "var(--good)";
+        detailEl.textContent = "Strongest on " + goodBands.slice(0, 2).join(" & ");
+      } else if (goodBands.length === 1) {
+        answerEl.textContent = "YES";
+        answerEl.style.color = "var(--good)";
+        detailEl.textContent = "Mainly on " + goodBands[0];
+      } else {
+        // Check for any Fair
+        const fairCount = order.filter(key => {
+          const b = data.bands[key] || {};
+          return (b.day || "").toLowerCase() === "fair" || (b.night || "").toLowerCase() === "fair";
+        }).length;
+        if (fairCount > 0) {
+          answerEl.textContent = "LIMITED";
+          answerEl.style.color = "var(--fair)";
+          detailEl.textContent = "Some fair paths possible";
+        } else {
+          answerEl.textContent = "POOR";
+          answerEl.style.color = "var(--poor)";
+          detailEl.textContent = "Skip conditions currently weak";
+        }
+      }
+
+      document.getElementById("updated").textContent =
+        "Updated: " + (data.updated || "just now") + "  ·  X-ray " + (data.xray || "—");
+
+      document.getElementById("loading").style.display = "none";
+      document.getElementById("content").style.display = "block";
+      document.getElementById("error").style.display = "none";
+    }
+
+    // ---------- Data loading ----------
+    async function loadData() {
+      const loading = document.getElementById("loading");
+      const content = document.getElementById("content");
+      const errorBox = document.getElementById("error");
+
+      loading.style.display = "block";
+      content.style.display = "none";
+      errorBox.style.display = "none";
+
+      try {
+        // Try direct first (works when hosted on most servers)
+        let response = await fetch("https://www.hamqsl.com/solarxml.php", {
+          cache: "no-store"
+        });
+
+        if (!response.ok) throw new Error("Network response was not ok");
+
+        const text = await response.text();
+        const data = parseXML(text);
+        render(data);
+      } catch (err) {
+        console.warn("Direct fetch failed (likely CORS):", err);
+
+        // Fallback: show last known good snapshot + clear message
+        errorBox.style.display = "block";
+        errorBox.innerHTML = `
+          Live fetch blocked by browser security (CORS).<br>
+          <strong>Quick fix:</strong> Host this file on any free site (Netlify Drop, GitHub Pages, etc.) 
+          or open the official page below. Showing recent snapshot.
+        `;
+
+        // Recent snapshot (from live data at build time – 29 Oct 2026)
+        const fallback = {
+          updated: "29 Oct 2026 ~1138 GMT (snapshot)",
+          solarflux: "93",
+          aindex: "7",
+          kindex: "0",
+          sunspots: "12",
+          xray: "B2.8",
+          bands: {
+            "80m-40m": { day: "Good", night: "Good" },
+            "30m-20m": { day: "Good", night: "Good" },
+            "17m-15m": { day: "Fair", night: "Fair" },
+            "12m-10m": { day: "Poor", night: "Poor" }
+          }
+        };
+        render(fallback);
+      }
+    }
+
+    // Start
+    loadData();
+
+    // Auto-refresh every 30 minutes
+    setInterval(loadData, 30 * 60 * 1000);
+  </script>
+</body>
+</html>
