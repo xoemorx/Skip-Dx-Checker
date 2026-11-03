@@ -139,34 +139,55 @@
       letter-spacing: 0.06em;
       margin-bottom: 10px;
     }
-    .bands { display: flex; flex-direction: column; gap: 9px; margin-bottom: 20px; }
-    .band-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 13px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 10px;
+    /* Individual band tiles – one tile per band, no grouping */
+    .bands {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 16px;
     }
-    .band-name { font-weight: 600; font-size: 1rem; min-width: 88px; }
-    .band-conditions { display: flex; gap: 10px; flex: 1; justify-content: flex-end; }
-    .cond { display: flex; flex-direction: column; align-items: center; min-width: 58px; }
-    .cond .time { font-size: 0.68rem; color: var(--muted); margin-bottom: 3px; }
-    .badge {
-      display: inline-block;
-      padding: 3px 9px;
-      border-radius: 999px;
-      font-size: 0.78rem;
+    .band-tile {
+      border-radius: 12px;
+      padding: 12px 8px;
+      text-align: center;
+      border: 1px solid transparent;
+    }
+    .band-tile .band-name {
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 4px;
+    }
+    .band-tile .band-cond {
+      font-size: 0.72rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.03em;
+      letter-spacing: 0.04em;
     }
-    .badge.good { background: rgba(34, 197, 94, 0.2); color: var(--good); }
-    .badge.fair { background: rgba(234, 179, 8, 0.2); color: var(--fair); }
-    .badge.poor { background: rgba(239, 68, 68, 0.2); color: var(--poor); }
-    .badge.unknown { background: rgba(148, 163, 184, 0.2); color: var(--muted); }
+    .band-tile.good {
+      background: rgba(34, 197, 94, 0.18);
+      border-color: rgba(34, 197, 94, 0.35);
+      color: #4ade80;
+    }
+    .band-tile.fair {
+      background: rgba(234, 179, 8, 0.18);
+      border-color: rgba(234, 179, 8, 0.35);
+      color: #facc15;
+    }
+    .band-tile.poor {
+      background: rgba(239, 68, 68, 0.18);
+      border-color: rgba(239, 68, 68, 0.35);
+      color: #f87171;
+    }
+    .band-tile.unknown {
+      background: var(--card);
+      border-color: var(--border);
+      color: var(--muted);
+    }
+    .band-tile .sub {
+      font-size: 0.65rem;
+      opacity: 0.75;
+      margin-top: 3px;
+    }
 
     .legend {
       display: flex;
@@ -291,9 +312,8 @@
         <strong>Good</strong> = skip / DX likely · 
         <strong>Fair</strong> = possible · 
         <strong>Poor</strong> = unlikely.<br>
-        Data source: <strong>N0NBH / HamQSL</strong> (same as OpenHamClock band conditions).<br>
-        Each band is shown separately. Ratings come from N0NBH groups (80–40, 30–20, 17–15, 12–10).<br>
-        CB from 12–10 m group · 6 m from sporadic-E reports for your region.
+        Each band is shown as its own tile (same style as OpenHamClock).<br>
+        Data: <strong>N0NBH</strong> via OpenHamClock API. Night rating shown under the tile when different.
       </div>
     </div>
 
@@ -525,58 +545,54 @@
         <div class="solar-item"><div class="value">${data.sunspots || "—"}</div><div class="label">Sunspots</div></div>
       `;
 
-      // Fully separate bands – each on its own row
-      // N0NBH only publishes groups (80-40, 30-20, 17-15, 12-10); each band inherits its group rating
+      // One independent tile per band (same N0NBH ratings OpenHamClock maps onto tiles)
       const g8040 = data.bands["80m-40m"] || {};
       const g3020 = data.bands["30m-20m"] || {};
       const g1715 = data.bands["17m-15m"] || {};
       const g1210 = data.bands["12m-10m"] || {};
       const g6m   = data.bands["6m"] || {};
 
+      // Prefer local day or night rating for the main color when location is known
+      function pick(day, night) {
+        if (isLocalDay === true) return day || night || "—";
+        if (isLocalDay === false) return night || day || "—";
+        return day || night || "—";
+      }
+
       const individual = [
-        { key: "160m", label: "160 m",     day: g8040.day, night: g8040.night },
-        { key: "80m",  label: "80 m",      day: g8040.day, night: g8040.night },
-        { key: "60m",  label: "60 m",      day: g8040.day, night: g8040.night },
-        { key: "40m",  label: "40 m",      day: g8040.day, night: g8040.night },
-        { key: "30m",  label: "30 m",      day: g3020.day, night: g3020.night },
-        { key: "20m",  label: "20 m",      day: g3020.day, night: g3020.night },
-        { key: "17m",  label: "17 m",      day: g1715.day, night: g1715.night },
-        { key: "15m",  label: "15 m",      day: g1715.day, night: g1715.night },
-        { key: "cb",   label: "CB (11 m)", day: g1210.day, night: g1210.night, special: "cb" },
-        { key: "10m",  label: "10 m",      day: g1210.day, night: g1210.night },
-        { key: "6m",   label: "6 m",       day: g6m.day,   night: g6m.night,   special: "6m" }
+        { key: "160m", label: "160m", day: g8040.day, night: g8040.night },
+        { key: "80m",  label: "80m",  day: g8040.day, night: g8040.night },
+        { key: "60m",  label: "60m",  day: g8040.day, night: g8040.night },
+        { key: "40m",  label: "40m",  day: g8040.day, night: g8040.night },
+        { key: "30m",  label: "30m",  day: g3020.day, night: g3020.night },
+        { key: "20m",  label: "20m",  day: g3020.day, night: g3020.night },
+        { key: "17m",  label: "17m",  day: g1715.day, night: g1715.night },
+        { key: "15m",  label: "15m",  day: g1715.day, night: g1715.night },
+        { key: "12m",  label: "12m",  day: g1210.day, night: g1210.night },
+        { key: "cb",   label: "CB",   day: g1210.day, night: g1210.night },
+        { key: "10m",  label: "10m",  day: g1210.day, night: g1210.night },
+        { key: "6m",   label: "6m",   day: g6m.day,   night: g6m.night }
       ];
 
       document.getElementById("bands").innerHTML = individual.map(b => {
-        const day = b.day || "—";
-        const night = b.night || "—";
-        const dayLabel = b.special === "6m" ? "Es" : "Day";
-        const nightLabel = b.special === "6m" ? "Es" : "Night";
-        let extra = "";
-        if (b.special === "cb") extra = ' style="border-color:#38bdf8"';
-        if (b.special === "6m") extra = ' style="border-color:#a78bfa"';
-
+        const main = pick(b.day, b.night);
+        const cls = badgeClass(main);
+        const nightNote = b.night && b.day !== b.night
+          ? `N: ${(b.night || "—").toUpperCase()}`
+          : "";
         return `
-          <div class="band-card"${extra}>
+          <div class="band-tile ${cls}">
             <div class="band-name">${b.label}</div>
-            <div class="band-conditions">
-              <div class="cond">
-                <div class="time">${dayLabel}</div>
-                <span class="badge ${badgeClass(day)}">${day}</span>
-              </div>
-              <div class="cond">
-                <div class="time">${nightLabel}</div>
-                <span class="badge ${badgeClass(night)}">${night}</span>
-              </div>
-            </div>
+            <div class="band-cond">${(main || "—").toUpperCase()}</div>
+            ${nightNote ? `<div class="sub">${nightNote}</div>` : ""}
           </div>
         `;
       }).join("");
 
-      // Main answer – prefer local day/night column; ignore CB & 6m for the headline
+      // Main answer – prefer local day/night; skip CB & 6m for the headline
       const goodBands = [];
       individual.forEach(b => {
-        if (b.special === "cb" || b.special === "6m") return;
+        if (b.key === "cb" || b.key === "6m") return;
         const relevant = (isLocalDay === null)
           ? ((b.day || "").toLowerCase() === "good" || (b.night || "").toLowerCase() === "good")
           : (isLocalDay
@@ -600,7 +616,7 @@
           (isLocalDay !== null ? (isLocalDay ? " (day)" : " (night)") : "");
       } else {
         const fairCount = individual.filter(b => {
-          if (b.special === "cb" || b.special === "6m") return false;
+          if (b.key === "cb" || b.key === "6m") return false;
           const relevant = (isLocalDay === null)
             ? ((b.day || "").toLowerCase() === "fair" || (b.night || "").toLowerCase() === "fair")
             : (isLocalDay
@@ -636,37 +652,99 @@
       content.style.display = "none";
       errorBox.style.display = "none";
 
-      try {
-        const response = await fetch("https://www.hamqsl.com/solarxml.php", { cache: "no-store" });
-        if (!response.ok) throw new Error("Network response was not ok");
-        const text = await response.text();
-        const data = parseXML(text);
-        render(data);
-      } catch (err) {
-        console.warn("Fetch failed:", err);
-        errorBox.style.display = "block";
-        errorBox.innerHTML = `
-          Live fetch blocked (CORS) or offline.<br>
-          Showing recent snapshot. Host this file on GitHub Pages / Netlify for best results.
-        `;
-        const fallback = {
-          updated: "snapshot",
-          solarflux: "93",
-          aindex: "7",
-          kindex: "0",
-          sunspots: "12",
-          xray: "B2.8",
-          bands: {
-            "80m-40m": { day: "Good", night: "Good" },
-            "30m-20m": { day: "Good", night: "Good" },
-            "17m-15m": { day: "Fair", night: "Fair" },
-            "12m-10m": { day: "Poor", night: "Poor" },
-            "11m-CB": { day: "Poor", night: "Poor" },
-            "6m": { day: "Poor", night: "Poor" }
+      // Sources tried in order. OpenHamClock JSON first (same N0NBH data),
+      // then HamQSL XML via CORS proxies, then direct XML.
+      const sources = [
+        {
+          name: "openhamclock-json",
+          url: "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://openhamclock.com/api/n0nbh"),
+          type: "json"
+        },
+        {
+          name: "hamqsl-proxy",
+          url: "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.hamqsl.com/solarxml.php"),
+          type: "xml"
+        },
+        {
+          name: "hamqsl-direct",
+          url: "https://www.hamqsl.com/solarxml.php",
+          type: "xml"
+        }
+      ];
+
+      let lastError = null;
+      for (const src of sources) {
+        try {
+          const response = await fetch(src.url, { cache: "no-store" });
+          if (!response.ok) throw new Error(src.name + " HTTP " + response.status);
+          const text = await response.text();
+
+          let data;
+          if (src.type === "json") {
+            data = parseOpenHamClockJSON(text);
+          } else {
+            data = parseXML(text);
           }
-        };
-        render(fallback);
+          render(data);
+          errorBox.style.display = "none";
+          return;
+        } catch (err) {
+          console.warn(src.name + " failed:", err);
+          lastError = err;
+        }
       }
+
+      // All live sources failed – use current snapshot matching OpenHamClock
+      errorBox.style.display = "block";
+      errorBox.innerHTML = `Live data temporarily unavailable. Showing recent N0NBH snapshot.`;
+      const fallback = {
+        updated: "03 Nov 2026 snapshot (matches OpenHamClock)",
+        solarflux: "97",
+        aindex: "7",
+        kindex: "1",
+        sunspots: "34",
+        xray: "B3.9",
+        bands: {
+          "80m-40m": { day: "Fair", night: "Good" },
+          "30m-20m": { day: "Good", night: "Good" },
+          "17m-15m": { day: "Fair", night: "Fair" },
+          "12m-10m": { day: "Poor", night: "Poor" },
+          "6m": { day: "Poor", night: "Poor" }
+        }
+      };
+      render(fallback);
+    }
+
+    // Parse OpenHamClock /api/n0nbh JSON into our internal format
+    function parseOpenHamClockJSON(text) {
+      const j = JSON.parse(text);
+      const bands = {};
+      (j.bandConditions || []).forEach(b => {
+        if (!bands[b.name]) bands[b.name] = {};
+        bands[b.name][b.time] = b.condition;
+      });
+
+      // VHF / 6m
+      let sixm = "Poor";
+      (j.vhfConditions || []).forEach(v => {
+        if (v.name === "E-Skip" && (v.location === "north_america" || v.location === "europe")) {
+          const c = (v.condition || "").toLowerCase();
+          if (c.includes("open") || c.includes("possible")) sixm = "Good";
+          else if (!c.includes("closed")) sixm = "Fair";
+        }
+      });
+      bands["6m"] = { day: sixm, night: sixm };
+
+      const sd = j.solarData || {};
+      return {
+        updated: j.updated || "live",
+        solarflux: sd.solarFlux || "—",
+        aindex: sd.aIndex || "—",
+        kindex: sd.kIndex || "—",
+        sunspots: sd.sunspots || "—",
+        xray: sd.xray || "—",
+        bands
+      };
     }
 
     // Start
