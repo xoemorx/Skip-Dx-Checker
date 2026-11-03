@@ -257,6 +257,79 @@
       margin: 0 auto 12px;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Clock / weather */
+    .clock-bar {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .clock-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      text-align: center;
+    }
+    .clock-card .clk-label { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .clock-card .clk-time { font-size: 1.35rem; font-weight: 700; color: var(--accent); margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .clock-card .clk-date { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+    .weather-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+    .weather-now {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .weather-icon { font-size: 2.4rem; line-height: 1; }
+    .weather-temp { font-size: 1.8rem; font-weight: 700; }
+    .weather-desc { color: var(--muted); font-size: 0.9rem; }
+    .weather-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 16px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .weather-meta span strong { color: var(--text); font-weight: 600; }
+    .sun-moon {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      font-size: 0.78rem;
+      text-align: center;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
+    .sun-moon .sm-label { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; }
+    .sun-moon .sm-value { font-weight: 600; margin-top: 2px; }
+
+    .forecast-row {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 4px;
+      margin-top: 10px;
+    }
+    .forecast-day {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 10px;
+      padding: 8px 2px;
+      text-align: center;
+      font-size: 0.68rem;
+    }
+    .forecast-day .fd-name { color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+    .forecast-day .fd-icon { font-size: 1.1rem; margin-bottom: 2px; }
+    .forecast-day .fd-hi { font-weight: 700; }
+    .forecast-day .fd-lo { color: var(--muted); }
   </style>
 </head>
 <body>
@@ -272,6 +345,48 @@
         <div class="local-time" id="local-status">Requesting permission</div>
       </div>
       <button onclick="requestLocation(true)">Locate</button>
+    </div>
+
+    <div class="clock-bar">
+      <div class="clock-card">
+        <div class="clk-label">Local</div>
+        <div class="clk-time" id="local-clock">--:--:--</div>
+        <div class="clk-date" id="local-date">—</div>
+      </div>
+      <div class="clock-card">
+        <div class="clk-label">UTC</div>
+        <div class="clk-time" id="utc-clock">--:--:--</div>
+        <div class="clk-date" id="utc-date">—</div>
+      </div>
+    </div>
+
+    <div class="weather-card" id="weather-card">
+      <div class="weather-now">
+        <div class="weather-icon" id="wx-icon">🌡️</div>
+        <div>
+          <div class="weather-temp" id="wx-temp">—°</div>
+          <div class="weather-desc" id="wx-desc">Waiting for location…</div>
+        </div>
+      </div>
+      <div class="weather-meta" id="wx-meta"></div>
+      <div class="sun-moon">
+        <div>
+          <div class="sm-label">Sunrise</div>
+          <div class="sm-value" id="wx-sunrise">—</div>
+        </div>
+        <div>
+          <div class="sm-label">Sunset</div>
+          <div class="sm-value" id="wx-sunset">—</div>
+        </div>
+        <div>
+          <div class="sm-label">Moon</div>
+          <div class="sm-value" id="wx-moon">—</div>
+        </div>
+      </div>
+      <div class="section-title" style="margin-top:14px;margin-bottom:6px">7-Day Forecast</div>
+      <div class="forecast-row" id="forecast-row">
+        <div class="forecast-day"><div class="fd-name">—</div></div>
+      </div>
     </div>
 
     <div id="map"></div>
@@ -425,6 +540,7 @@
         const dayNight = isLocalDay ? "Local Day" : "Local Night";
         statusEl.textContent = dayNight + " · " + userLat.toFixed(2) + "°, " + userLon.toFixed(2) + "°";
         updateMap();
+        loadWeather();
       } else {
         gridEl.textContent = "Location unknown";
         statusEl.textContent = "Tap Locate or allow permission";
@@ -447,7 +563,6 @@
           userGrid = latLonToGrid(userLat, userLon);
           isLocalDay = isDayAt(userLat, userLon);
           updateLocationUI();
-          // Re-render if data already loaded so 6m region preference updates
           if (window.lastData) render(window.lastData);
         },
         (err) => {
@@ -458,6 +573,122 @@
         },
         { enableHighAccuracy: false, timeout: 10000, maximumAge: force ? 0 : 300000 }
       );
+    }
+
+    // ---------- Clocks ----------
+    function pad(n) { return String(n).padStart(2, "0"); }
+    function tickClocks() {
+      const now = new Date();
+      document.getElementById("local-clock").textContent =
+        pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+      document.getElementById("local-date").textContent =
+        now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      document.getElementById("utc-clock").textContent =
+        pad(now.getUTCHours()) + ":" + pad(now.getUTCMinutes()) + ":" + pad(now.getUTCSeconds());
+      document.getElementById("utc-date").textContent =
+        now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) + " UTC";
+    }
+
+    // ---------- Moon phase ----------
+    function moonPhase(date = new Date()) {
+      // Approximate synodic month algorithm
+      const lp = 2551443; // synodic month in seconds
+      const newMoon = new Date(Date.UTC(2000, 0, 6, 18, 14, 0));
+      const phase = ((date.getTime() - newMoon.getTime()) / 1000) % lp;
+      const p = phase < 0 ? phase + lp : phase;
+      const age = p / 86400; // days into cycle
+      const frac = age / 29.53058867;
+
+      let name, icon, waxWane;
+      if (frac < 0.03 || frac > 0.97) { name = "New Moon"; icon = "🌑"; waxWane = ""; }
+      else if (frac < 0.22) { name = "Waxing Crescent"; icon = "🌒"; waxWane = "Waxing"; }
+      else if (frac < 0.28) { name = "First Quarter"; icon = "🌓"; waxWane = "Waxing"; }
+      else if (frac < 0.47) { name = "Waxing Gibbous"; icon = "🌔"; waxWane = "Waxing"; }
+      else if (frac < 0.53) { name = "Full Moon"; icon = "🌕"; waxWane = ""; }
+      else if (frac < 0.72) { name = "Waning Gibbous"; icon = "🌖"; waxWane = "Waning"; }
+      else if (frac < 0.78) { name = "Last Quarter"; icon = "🌗"; waxWane = "Waning"; }
+      else { name = "Waning Crescent"; icon = "🌘"; waxWane = "Waning"; }
+
+      return { name, icon, waxWane, age: age.toFixed(1) };
+    }
+
+    // ---------- Weather (Open-Meteo – free, no key, CORS ok) ----------
+    const WX_CODES = {
+      0: ["Clear", "☀️"], 1: ["Mainly clear", "🌤️"], 2: ["Partly cloudy", "⛅"], 3: ["Overcast", "☁️"],
+      45: ["Fog", "🌫️"], 48: ["Rime fog", "🌫️"],
+      51: ["Light drizzle", "🌦️"], 53: ["Drizzle", "🌦️"], 55: ["Heavy drizzle", "🌧️"],
+      61: ["Light rain", "🌧️"], 63: ["Rain", "🌧️"], 65: ["Heavy rain", "🌧️"],
+      71: ["Light snow", "🌨️"], 73: ["Snow", "❄️"], 75: ["Heavy snow", "❄️"],
+      80: ["Rain showers", "🌦️"], 81: ["Rain showers", "🌧️"], 82: ["Heavy showers", "🌧️"],
+      95: ["Thunderstorm", "⛈️"], 96: ["Storm + hail", "⛈️"], 99: ["Storm + hail", "⛈️"]
+    };
+
+    function wxInfo(code) {
+      return WX_CODES[code] || ["—", "🌡️"];
+    }
+
+    function fmtTimeISO(iso) {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return pad(d.getHours()) + ":" + pad(d.getMinutes());
+    }
+
+    async function loadWeather() {
+      if (userLat === null || userLon === null) return;
+      try {
+        const url = "https://api.open-meteo.com/v1/forecast?" +
+          "latitude=" + userLat.toFixed(4) +
+          "&longitude=" + userLon.toFixed(4) +
+          "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature" +
+          "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset" +
+          "&temperature_unit=fahrenheit&wind_speed_unit=mph" +
+          "&timezone=auto&forecast_days=7";
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("weather HTTP " + res.status);
+        const j = await res.json();
+
+        const cur = j.current || {};
+        const daily = j.daily || {};
+        const [desc, icon] = wxInfo(cur.weather_code);
+
+        document.getElementById("wx-icon").textContent = icon;
+        document.getElementById("wx-temp").textContent = Math.round(cur.temperature_2m) + "°F";
+        document.getElementById("wx-desc").textContent = desc;
+        document.getElementById("wx-meta").innerHTML =
+          `<span>Feels <strong>${Math.round(cur.apparent_temperature)}°F</strong></span>` +
+          `<span>Humidity <strong>${cur.relative_humidity_2m}%</strong></span>` +
+          `<span>Wind <strong>${Math.round(cur.wind_speed_10m)} mph</strong></span>`;
+
+        // Today's sunrise/sunset
+        document.getElementById("wx-sunrise").textContent = fmtTimeISO(daily.sunrise && daily.sunrise[0]);
+        document.getElementById("wx-sunset").textContent = fmtTimeISO(daily.sunset && daily.sunset[0]);
+
+        const moon = moonPhase();
+        document.getElementById("wx-moon").textContent =
+          moon.icon + " " + (moon.waxWane ? moon.waxWane : moon.name.replace(" Moon", ""));
+
+        // 7-day forecast
+        const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        let html = "";
+        for (let i = 0; i < 7; i++) {
+          const dt = daily.time && daily.time[i] ? new Date(daily.time[i] + "T12:00:00") : null;
+          const name = i === 0 ? "Today" : (dt ? days[dt.getDay()] : "—");
+          const [, ic] = wxInfo(daily.weather_code && daily.weather_code[i]);
+          const hi = daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[i]) : "—";
+          const lo = daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[i]) : "—";
+          html += `<div class="forecast-day">
+            <div class="fd-name">${name}</div>
+            <div class="fd-icon">${ic}</div>
+            <div class="fd-hi">${hi}°</div>
+            <div class="fd-lo">${lo}°</div>
+          </div>`;
+        }
+        document.getElementById("forecast-row").innerHTML = html;
+      } catch (err) {
+        console.warn("Weather failed:", err);
+        document.getElementById("wx-desc").textContent = "Weather unavailable";
+      }
     }
 
     // ---------- Data parsing ----------
@@ -743,9 +974,18 @@
 
     // Start
     initMap();
+    tickClocks();
+    setInterval(tickClocks, 1000);
+    // Show moon even before location
+    (function () {
+      const m = moonPhase();
+      document.getElementById("wx-moon").textContent =
+        m.icon + " " + (m.waxWane ? m.waxWane : m.name.replace(" Moon", ""));
+    })();
     requestLocation();
     loadData();
     setInterval(loadData, 30 * 60 * 1000);
+    setInterval(loadWeather, 30 * 60 * 1000);
   </script>
 </body>
 </html>
