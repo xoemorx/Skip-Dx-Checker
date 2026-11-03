@@ -508,7 +508,10 @@
     }
 
     let baseLayer = null;
-    let mapIsNight = null; // track current style so we don't rebuild unnecessarily
+    let overlayLayer = null;   // streets / borders on top
+    let aircraftLayer = null;  // OpenSky aircraft markers
+    let mapIsNight = null;
+    let aircraftTimer = null;
 
     function dayTileLayer() {
       return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -517,8 +520,7 @@
       });
     }
 
-    // NASA VIIRS Black Marble city lights via GIBS (no API key)
-    // Classic Earth-at-night composite from Suomi NPP VIIRS Day/Night Band
+    // NASA VIIRS Black Marble city lights via GIBS
     function nightTileLayer() {
       return L.tileLayer(
         "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg",
@@ -532,16 +534,37 @@
       );
     }
 
+    // Streets / borders / labels overlay (works over night lights and as extra detail by day)
+    function streetsOverlayLayer() {
+      return L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png", {
+        attribution: '&copy; OSM &copy; CARTO',
+        subdomains: "abcd",
+        maxZoom: 19,
+        opacity: 0.85,
+        pane: "overlayPane"
+      });
+    }
+
     function setMapStyle(night) {
       if (!map) return;
-      if (mapIsNight === night && baseLayer) return; // already correct
-
-      if (baseLayer) {
-        map.removeLayer(baseLayer);
+      if (mapIsNight === night && baseLayer) {
+        ensureOverlay();
+        return;
       }
+
+      if (baseLayer) map.removeLayer(baseLayer);
       baseLayer = night ? nightTileLayer() : dayTileLayer();
       baseLayer.addTo(map);
       mapIsNight = night;
+      ensureOverlay();
+    }
+
+    function ensureOverlay() {
+      if (!map) return;
+      if (overlayLayer) map.removeLayer(overlayLayer);
+      // Always show streets/borders/labels on top of base
+      overlayLayer = streetsOverlayLayer();
+      overlayLayer.addTo(map);
     }
 
     function initMap() {
@@ -554,7 +577,8 @@
         attributionControl: true
       }).setView([25, 0], 2);
 
-      // Default to day until we know local day/night
+      aircraftLayer = L.layerGroup().addTo(map);
+
       setMapStyle(false);
 
       setTimeout(() => { map.invalidateSize(); }, 200);
@@ -565,10 +589,8 @@
       if (!map) initMap();
       if (userLat === null || userLon === null) return;
 
-      // NASA VIIRS city lights when local night, normal map when day
       setMapStyle(isLocalDay === false);
 
-      // Night layer maxes at zoom 8; day can go higher
       const zoom = isLocalDay === false ? 6 : 7;
       map.setView([userLat, userLon], zoom);
       map.invalidateSize();
@@ -588,10 +610,72 @@
       marker.bindPopup(
         `<strong>${userGrid || "Your location"}</strong><br>` +
         `${userLat.toFixed(4)}°, ${userLon.toFixed(4)}°<br>` +
-        (isLocalDay ? "Local Day · street map" : "Local Night · NASA VIIRS city lights")
+        (isLocalDay ? "Local Day · street map" : "Local Night · NASA VIIRS + streets")
       ).openPopup();
 
       setTimeout(() => { map.invalidateSize(); }, 100);
+      startAircraftUpdates();
+    }
+
+    // ---------- Live aircraft (OpenSky Network) ----------
+    async function loadAircraft() {
+      if (!map || userLat === null || userLon === null || !aircraftLayer) return;
+
+      // ~3° box around user (~300 km)
+      const d = 3;
+      const lamin = userLat - d;
+      const lamax = userLat + d;
+      const lomin = userLon - d;
+      const lomax = userLon + d;
+
+      try {
+        const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("OpenSky " + res.status);
+        const data = await res.json();
+        const states = data.states || [];
+
+        aircraftLayer.clearLayers();
+
+        states.forEach(s => {
+          // OpenSky state vector:
+          // 0 icao24, 1 callsign, 2 origin_country, 5 lon, 6 lat, 7 baro_altitude,
+          // 8 on_ground, 9 velocity, 10 true_track, 13 geo_altitude
+          const lon = s[5], lat = s[6];
+          if (lon == null || lat == null) return;
+          if (s[8]) return; // skip on ground
+
+          const callsign = (s[1] || s[0] || "?").trim();
+          const alt = s[13] != null ? Math.round(s[13]) : (s[7] != null ? Math.round(s[7]) : null);
+          const spd = s[9] != null ? Math.round(s[9] * 3.6) : null; // m/s → km/h
+          const track = s[10];
+          const country = s[2] || "";
+
+          const plane = L.circleMarker([lat, lon], {
+            radius: 5,
+            color: "#fbbf24",
+            fillColor: "#f59e0b",
+            fillOpacity: 0.9,
+            weight: 1
+          });
+
+          let popup = `<strong>✈ ${callsign}</strong><br>${country}`;
+          if (alt != null) popup += `<br>Alt ${alt} m`;
+          if (spd != null) popup += `<br>${spd} km/h`;
+          if (track != null) popup += `<br>Track ${Math.round(track)}°`;
+          plane.bindPopup(popup);
+          plane.addTo(aircraftLayer);
+        });
+      } catch (err) {
+        console.warn("OpenSky aircraft fetch failed:", err);
+      }
+    }
+
+    function startAircraftUpdates() {
+      loadAircraft();
+      if (aircraftTimer) clearInterval(aircraftTimer);
+      // OpenSky free tier: keep it polite
+      aircraftTimer = setInterval(loadAircraft, 60 * 1000);
     }
 
     function updateLocationUI() {
