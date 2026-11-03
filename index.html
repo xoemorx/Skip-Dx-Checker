@@ -560,14 +560,30 @@
     let terminatorTimer = null;
     let aircraftTimer = null;
 
-    function dayTileLayer() {
-      return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 19
-      });
+    // Dark basemap (Esri – no API key)
+    function darkTileLayer() {
+      return L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        { attribution: "Esri", maxZoom: 16 }
+      );
     }
 
-    // Streets / borders / place names – Esri reference layers (no API key)
+    // NASA VIIRS city lights
+    function cityLightsLayer() {
+      return L.tileLayer(
+        "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg",
+        {
+          attribution: 'NASA VIIRS · <a href="https://earthdata.nasa.gov/gibs">GIBS</a>',
+          maxZoom: 8,
+          maxNativeZoom: 8,
+          opacity: 1
+        }
+      );
+    }
+
+    let cityLights = null;
+
+    // Borders / labels (Esri – no API key)
     function ensureOverlay() {
       if (!map) return;
       if (overlayLayer) {
@@ -578,12 +594,12 @@
 
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Esri", maxZoom: 19, opacity: 0.9 }
+        { attribution: "Esri", maxZoom: 16, opacity: 0.8 }
       ).addTo(overlayLayer);
 
       L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Esri", maxZoom: 19, opacity: 0.75 }
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
+        { attribution: "Esri", maxZoom: 16, opacity: 0.65 }
       ).addTo(overlayLayer);
 
       overlayLayer.addTo(map);
@@ -609,6 +625,7 @@
     }
 
     function terminatorLatLngs(date = new Date()) {
+      // Returns polygon covering the DAY side (so night keeps city lights)
       const sun = julianSun(date);
       const rad = Math.PI / 180;
       const resolution = 2;
@@ -624,16 +641,17 @@
         }
         lats.push(lat);
       }
-      // Close polygon via the night pole (north is dark when sun is in southern hemisphere)
-      const northDark = sun.lat < 0;
+      // FLIPPED: close via the day pole (was inverted before)
+      // When sun is in southern hemisphere (lat < 0), south pole is in daylight
+      const southIsDay = sun.lat < 0;
       const coords = [];
       for (let i = 0; i < lats.length; i++) {
         coords.push([lats[i], -180 + i * resolution]);
       }
-      if (northDark) {
-        coords.push([85, 180], [85, -180]);
+      if (southIsDay) {
+        coords.push([-85, 180], [-85, -180]); // day includes south
       } else {
-        coords.push([-85, 180], [-85, -180]);
+        coords.push([85, 180], [85, -180]);   // day includes north
       }
       return coords;
     }
@@ -650,13 +668,14 @@
           map.getPane("terminatorPane").style.zIndex = 450;
           map.getPane("terminatorPane").style.pointerEvents = "none";
         }
+        // Light wash over DAY side — night side stays dark with city lights
         terminatorLayer = L.polygon(coords, {
           pane: "terminatorPane",
-          color: "#334155",
-          weight: 1.5,
-          opacity: 0.9,
-          fillColor: "#0b1220",
-          fillOpacity: 0.58,
+          color: "#64748b",
+          weight: 1,
+          opacity: 0.5,
+          fillColor: "#94a3b8",
+          fillOpacity: 0.35,
           interactive: false
         }).addTo(map);
       }
@@ -673,8 +692,14 @@
         worldCopyJump: true
       }).setView([20, 0], 2);
 
-      baseLayer = dayTileLayer();
+      // Dark theme base
+      baseLayer = darkTileLayer();
       baseLayer.addTo(map);
+
+      // City lights over the dark base (visible on night side)
+      cityLights = cityLightsLayer();
+      cityLights.addTo(map);
+
       ensureOverlay();
 
       aircraftLayer = L.layerGroup().addTo(map);
