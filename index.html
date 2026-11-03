@@ -534,15 +534,37 @@
       );
     }
 
-    // Streets / borders / labels overlay (works over night lights and as extra detail by day)
-    function streetsOverlayLayer() {
-      return L.tileLayer("https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png", {
-        attribution: '&copy; OSM &copy; CARTO',
-        subdomains: "abcd",
-        maxZoom: 19,
-        opacity: 0.85,
-        pane: "overlayPane"
-      });
+    // Streets / borders / place names – Esri reference layers (no API key)
+    function ensureOverlay() {
+      if (!map) return;
+      if (overlayLayer) {
+        map.removeLayer(overlayLayer);
+        overlayLayer = null;
+      }
+      // Layer group so we can stack borders + roads on top of base/VIIRS
+      overlayLayer = L.layerGroup();
+
+      // Country/state borders + place labels
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
+        {
+          attribution: "Esri",
+          maxZoom: 19,
+          opacity: 0.9
+        }
+      ).addTo(overlayLayer);
+
+      // Major roads / transportation
+      L.tileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
+        {
+          attribution: "Esri",
+          maxZoom: 19,
+          opacity: 0.75
+        }
+      ).addTo(overlayLayer);
+
+      overlayLayer.addTo(map);
     }
 
     function setMapStyle(night) {
@@ -557,14 +579,6 @@
       baseLayer.addTo(map);
       mapIsNight = night;
       ensureOverlay();
-    }
-
-    function ensureOverlay() {
-      if (!map) return;
-      if (overlayLayer) map.removeLayer(overlayLayer);
-      // Always show streets/borders/labels on top of base
-      overlayLayer = streetsOverlayLayer();
-      overlayLayer.addTo(map);
     }
 
     function initMap() {
@@ -618,24 +632,44 @@
     }
 
     // ---------- Live aircraft (OpenSky Network) ----------
+    // Browser CORS is blocked by OpenSky; use public CORS proxies as fallbacks
+    async function fetchOpenSky(lamin, lomin, lamax, lomax) {
+      const api = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
+      const proxies = [
+        "https://corsproxy.io/?" + encodeURIComponent(api),
+        "https://api.allorigins.win/raw?url=" + encodeURIComponent(api)
+      ];
+      // Try direct first (works if CORS ever allows), then proxies
+      const attempts = [api, ...proxies];
+      let lastErr = null;
+      for (const url of attempts) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          return await res.json();
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      throw lastErr || new Error("OpenSky unreachable");
+    }
+
     async function loadAircraft() {
       if (!map || userLat === null || userLon === null || !aircraftLayer) return;
 
-      // ~3° box around user (~300 km)
-      const d = 3;
+      // ~4° box around user (~400 km)
+      const d = 4;
       const lamin = userLat - d;
       const lamax = userLat + d;
       const lomin = userLon - d;
       const lomax = userLon + d;
 
       try {
-        const url = `https://opensky-network.org/api/states/all?lamin=${lamin}&lomin=${lomin}&lamax=${lamax}&lomax=${lomax}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("OpenSky " + res.status);
-        const data = await res.json();
+        const data = await fetchOpenSky(lamin, lomin, lamax, lomax);
         const states = data.states || [];
 
         aircraftLayer.clearLayers();
+        let count = 0;
 
         states.forEach(s => {
           // OpenSky state vector:
@@ -652,11 +686,11 @@
           const country = s[2] || "";
 
           const plane = L.circleMarker([lat, lon], {
-            radius: 5,
-            color: "#fbbf24",
+            radius: 6,
+            color: "#fde68a",
             fillColor: "#f59e0b",
-            fillOpacity: 0.9,
-            weight: 1
+            fillOpacity: 0.95,
+            weight: 1.5
           });
 
           let popup = `<strong>✈ ${callsign}</strong><br>${country}`;
@@ -665,7 +699,10 @@
           if (track != null) popup += `<br>Track ${Math.round(track)}°`;
           plane.bindPopup(popup);
           plane.addTo(aircraftLayer);
+          count++;
         });
+
+        console.log("Aircraft loaded:", count);
       } catch (err) {
         console.warn("OpenSky aircraft fetch failed:", err);
       }
@@ -674,8 +711,8 @@
     function startAircraftUpdates() {
       loadAircraft();
       if (aircraftTimer) clearInterval(aircraftTimer);
-      // OpenSky free tier: keep it polite
-      aircraftTimer = setInterval(loadAircraft, 60 * 1000);
+      // OpenSky free/anonymous: refresh every 90s to stay under rate limits
+      aircraftTimer = setInterval(loadAircraft, 90 * 1000);
     }
 
     function updateLocationUI() {
