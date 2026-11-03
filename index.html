@@ -124,7 +124,11 @@
       margin-bottom: 4px;
       font-size: 0.65rem;
     }
-    .leaflet-container { background: #1e293b; font-family: inherit; }
+    .leaflet-container { background: #0b1220; font-family: inherit; }
+    /* Darken OpenTopoMap tiles while keeping relief readable */
+    .dark-topo-tiles {
+      filter: invert(1) hue-rotate(180deg) brightness(0.92) contrast(0.95) saturate(0.65);
+    }
     .leaflet-control-attribution { font-size: 9px !important; background: rgba(15,23,42,0.8) !important; color: #94a3b8 !important; }
     .leaflet-control-attribution a { color: #38bdf8 !important; }
     .leaflet-popup-content-wrapper {
@@ -413,6 +417,34 @@
       grid-template-columns: repeat(4, 1fr);
       gap: 4px;
     }
+    .muf-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+    .muf-item {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 4px;
+      text-align: center;
+    }
+    .muf-value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: #a78bfa;
+    }
+    .muf-label {
+      font-size: 0.58rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      margin-top: 1px;
+    }
+    .muf-note {
+      text-align: center;
+      font-size: 0.62rem;
+      color: var(--muted);
+    }
     .legend, .hint, .footer { display: none !important; }
     .actions { display: flex; gap: 6px; flex-shrink: 0; }
     .updated { text-align: center; font-size: 0.65rem; color: var(--muted); }
@@ -465,6 +497,21 @@
           <div class="detail" id="main-detail">Checking bands…</div>
         </div>
         <div class="solar-grid" id="solar-grid"></div>
+        <div class="muf-row" id="muf-row">
+          <div class="muf-item">
+            <div class="muf-value" id="muf-value">—</div>
+            <div class="muf-label">MUF</div>
+          </div>
+          <div class="muf-item">
+            <div class="muf-value" id="luf-value">—</div>
+            <div class="muf-label">LUF</div>
+          </div>
+          <div class="muf-item">
+            <div class="muf-value" id="fof2-value">—</div>
+            <div class="muf-label">foF2</div>
+          </div>
+        </div>
+        <div class="muf-note" id="muf-note">MUF ≈ 3000 km hop · LUF estimated</div>
         <div class="updated" id="updated"></div>
         <div class="actions">
           <button class="action primary" onclick="loadData()">↻ Refresh</button>
@@ -554,30 +601,18 @@
     let terminatorTimer = null;
     let aircraftTimer = null;
 
-    // Dark basemap (Esri – no API key)
-    function darkTileLayer() {
-      return L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Esri", maxZoom: 16 }
-      );
+    // Dark topographic basemap (OpenTopoMap + CSS invert for dark theme)
+    function darkTopoLayer() {
+      return L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
+        attribution:
+          '&copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+        maxZoom: 17,
+        subdomains: "abc",
+        className: "dark-topo-tiles"
+      });
     }
 
-    // NASA VIIRS city lights
-    function cityLightsLayer() {
-      return L.tileLayer(
-        "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg",
-        {
-          attribution: 'NASA VIIRS · <a href="https://earthdata.nasa.gov/gibs">GIBS</a>',
-          maxZoom: 8,
-          maxNativeZoom: 8,
-          opacity: 1
-        }
-      );
-    }
-
-    let cityLights = null;
-
-    // Borders / labels (Esri – no API key)
+    // Light borders/labels on top of dark topo
     function ensureOverlay() {
       if (!map) return;
       if (overlayLayer) {
@@ -588,12 +623,7 @@
 
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Esri", maxZoom: 16, opacity: 0.8 }
-      ).addTo(overlayLayer);
-
-      L.tileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
-        { attribution: "Esri", maxZoom: 16, opacity: 0.65 }
+        { attribution: "Esri", maxZoom: 16, opacity: 0.55 }
       ).addTo(overlayLayer);
 
       overlayLayer.addTo(map);
@@ -686,13 +716,9 @@
         worldCopyJump: true
       }).setView([20, 0], 2);
 
-      // Dark theme base
-      baseLayer = darkTileLayer();
+      // Dark topographic base (no night lights)
+      baseLayer = darkTopoLayer();
       baseLayer.addTo(map);
-
-      // City lights over the dark base (visible on night side)
-      cityLights = cityLightsLayer();
-      cityLights.addTo(map);
 
       ensureOverlay();
 
@@ -1139,6 +1165,136 @@
       };
     }
 
+    // Estimate LUF (MHz) from absorption / geomagnetic activity
+    function estimateLuf(kindex, isDay) {
+      const k = parseFloat(kindex);
+      const kN = isNaN(k) ? 2 : k;
+      // Day: D-layer absorption raises LUF; storms raise it further
+      let luf = isDay ? 3.8 : 1.6;
+      luf += kN * 0.35;
+      return Math.max(1.5, Math.min(12, luf));
+    }
+
+    // Rough mid-latitude estimate when ionosonde data unavailable
+    function estimateMufFromSolar(sfi, kindex, isDay, lat) {
+      const sfiN = parseFloat(sfi) || 100;
+      const kN = parseFloat(kindex);
+      const k = isNaN(kN) ? 2 : kN;
+      let foF2 = Math.sqrt(Math.max(60, sfiN)) * 0.72;
+      if (!isDay) foF2 *= 0.55;
+      const absLat = Math.abs(lat != null ? lat : 45);
+      if (absLat > 55) foF2 *= 0.88;
+      if (absLat < 25) foF2 *= 1.06;
+      foF2 *= Math.max(0.55, 1 - k * 0.045);
+      const mFactor = isDay ? 3.15 : 2.75;
+      const muf = foF2 * mFactor;
+      const luf = estimateLuf(k, isDay);
+      return {
+        muf: Math.max(luf + 1, muf),
+        luf,
+        fof2: foF2,
+        source: "est."
+      };
+    }
+
+    function haversineKm(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const toR = Math.PI / 180;
+      const dLat = (lat2 - lat1) * toR;
+      const dLon = (lon2 - lon1) * toR;
+      const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * toR) * Math.cos(lat2 * toR) * Math.sin(dLon / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    }
+
+    // Nearest GIRO ionosonde via KC2G (real foF2 / MUF 3000 km)
+    async function fetchNearestIonosonde(lat, lon) {
+      const api = "https://prop.kc2g.com/api/stations.json";
+      const proxies = [
+        api,
+        "https://api.allorigins.win/raw?url=" + encodeURIComponent(api)
+      ];
+      let stations = null;
+      for (const url of proxies) {
+        try {
+          const res = await fetch(url);
+          if (!res.ok) continue;
+          stations = await res.json();
+          if (Array.isArray(stations) && stations.length) break;
+        } catch (e) { /* try next */ }
+      }
+      if (!stations || !stations.length) return null;
+
+      let best = null;
+      let bestD = Infinity;
+      for (const s of stations) {
+        if (!s.station || s.fof2 == null && s.mufd == null) continue;
+        // Skip stale (>6 h) if time present
+        if (s.time) {
+          const ageH = (Date.now() - new Date(s.time).getTime()) / 3600000;
+          if (ageH > 6) continue;
+        }
+        let slat = parseFloat(s.station.latitude);
+        let slon = parseFloat(s.station.longitude);
+        if (isNaN(slat) || isNaN(slon)) continue;
+        // KC2G longitudes sometimes 0–360
+        if (slon > 180) slon -= 360;
+        const d = haversineKm(lat, lon, slat, slon);
+        if (d < bestD) {
+          bestD = d;
+          best = s;
+        }
+      }
+      if (!best) return null;
+      const fof2 = best.fof2 != null ? parseFloat(best.fof2) : null;
+      const mufd = best.mufd != null ? parseFloat(best.mufd) : (fof2 != null ? fof2 * (parseFloat(best.md) || 3.2) : null);
+      return {
+        muf: mufd,
+        fof2,
+        luf: null, // filled by estimate
+        station: best.station.name,
+        distanceKm: Math.round(bestD),
+        source: "ionosonde"
+      };
+    }
+
+    async function updateMufLuf(data) {
+      const sfi = data && data.solarflux;
+      const k = data && data.kindex;
+      const day = isLocalDay !== false; // prefer day if unknown
+      const lat = userLat;
+      const lon = userLon;
+
+      let result = estimateMufFromSolar(sfi, k, day, lat);
+      let note = "Estimated from SFI/K · MUF ≈ 3000 km hop";
+
+      if (lat != null && lon != null) {
+        try {
+          const iono = await fetchNearestIonosonde(lat, lon);
+          if (iono && iono.muf != null && !isNaN(iono.muf)) {
+            result.muf = iono.muf;
+            if (iono.fof2 != null && !isNaN(iono.fof2)) result.fof2 = iono.fof2;
+            result.source = "ionosonde";
+            note = (iono.station || "Ionosonde") +
+              (iono.distanceKm != null ? " · " + iono.distanceKm + " km away" : "") +
+              " · MUF(3000)";
+          }
+        } catch (e) {
+          console.warn("Ionosonde fetch failed", e);
+        }
+      }
+
+      result.luf = estimateLuf(k, day);
+      // Keep LUF below MUF
+      if (result.luf >= result.muf) result.luf = Math.max(1.5, result.muf * 0.35);
+
+      const fmt = (v) => (v == null || isNaN(v) ? "—" : Number(v).toFixed(1) + " MHz");
+      document.getElementById("muf-value").textContent = fmt(result.muf);
+      document.getElementById("luf-value").textContent = fmt(result.luf);
+      document.getElementById("fof2-value").textContent = fmt(result.fof2);
+      document.getElementById("muf-note").textContent = note;
+    }
+
     function render(data) {
       window.lastData = data;
 
@@ -1149,6 +1305,8 @@
         <div class="solar-item"><div class="value">${data.aindex || "—"}</div><div class="label">A-Index</div></div>
         <div class="solar-item"><div class="value">${data.sunspots || "—"}</div><div class="label">Sunspots</div></div>
       `;
+
+      updateMufLuf(data);
 
       // One independent tile per band (same N0NBH ratings OpenHamClock maps onto tiles)
       const g8040 = data.bands["80m-40m"] || {};
