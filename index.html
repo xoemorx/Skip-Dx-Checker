@@ -291,8 +291,9 @@
         <strong>Good</strong> = skip / DX likely · 
         <strong>Fair</strong> = possible · 
         <strong>Poor</strong> = unlikely.<br>
-        11 m (CB) estimated from 12–10 m. 6 m uses sporadic-E reports for your region.<br>
-        HF ratings are global estimates. Your grid and local day/night are shown above.
+        Data source: <strong>N0NBH / HamQSL</strong> (same as OpenHamClock band conditions).<br>
+        Each band is shown separately. Ratings come from N0NBH groups (80–40, 30–20, 17–15, 12–10).<br>
+        CB from 12–10 m group · 6 m from sporadic-E reports for your region.
       </div>
     </div>
 
@@ -524,33 +525,40 @@
         <div class="solar-item"><div class="value">${data.sunspots || "—"}</div><div class="label">Sunspots</div></div>
       `;
 
-      const order = ["80m-40m", "30m-20m", "17m-15m", "12m-10m", "11m-CB", "6m"];
-      const labels = {
-        "80m-40m": "80 – 40 m",
-        "30m-20m": "30 – 20 m",
-        "17m-15m": "17 – 15 m",
-        "12m-10m": "12 – 10 m",
-        "11m-CB": "11 m (CB)",
-        "6m": "6 m"
-      };
+      // Fully separate bands – each on its own row
+      // N0NBH only publishes groups (80-40, 30-20, 17-15, 12-10); each band inherits its group rating
+      const g8040 = data.bands["80m-40m"] || {};
+      const g3020 = data.bands["30m-20m"] || {};
+      const g1715 = data.bands["17m-15m"] || {};
+      const g1210 = data.bands["12m-10m"] || {};
+      const g6m   = data.bands["6m"] || {};
 
-      document.getElementById("bands").innerHTML = order.map(key => {
-        const b = data.bands[key] || {};
-        let day = b.day || "—";
-        let night = b.night || "—";
+      const individual = [
+        { key: "160m", label: "160 m",     day: g8040.day, night: g8040.night },
+        { key: "80m",  label: "80 m",      day: g8040.day, night: g8040.night },
+        { key: "60m",  label: "60 m",      day: g8040.day, night: g8040.night },
+        { key: "40m",  label: "40 m",      day: g8040.day, night: g8040.night },
+        { key: "30m",  label: "30 m",      day: g3020.day, night: g3020.night },
+        { key: "20m",  label: "20 m",      day: g3020.day, night: g3020.night },
+        { key: "17m",  label: "17 m",      day: g1715.day, night: g1715.night },
+        { key: "15m",  label: "15 m",      day: g1715.day, night: g1715.night },
+        { key: "cb",   label: "CB (11 m)", day: g1210.day, night: g1210.night, special: "cb" },
+        { key: "10m",  label: "10 m",      day: g1210.day, night: g1210.night },
+        { key: "6m",   label: "6 m",       day: g6m.day,   night: g6m.night,   special: "6m" }
+      ];
 
-        // If we know local day/night, highlight the relevant column for HF bands
-        // (for 6m both are the same Es status)
-        let dayLabel = key === "6m" ? "Es" : "Day";
-        let nightLabel = key === "6m" ? "Es" : "Night";
-
+      document.getElementById("bands").innerHTML = individual.map(b => {
+        const day = b.day || "—";
+        const night = b.night || "—";
+        const dayLabel = b.special === "6m" ? "Es" : "Day";
+        const nightLabel = b.special === "6m" ? "Es" : "Night";
         let extra = "";
-        if (key === "11m-CB") extra = ' style="border-color:#38bdf8"';
-        if (key === "6m") extra = ' style="border-color:#a78bfa"';
+        if (b.special === "cb") extra = ' style="border-color:#38bdf8"';
+        if (b.special === "6m") extra = ' style="border-color:#a78bfa"';
 
         return `
           <div class="band-card"${extra}>
-            <div class="band-name">${labels[key]}</div>
+            <div class="band-name">${b.label}</div>
             <div class="band-conditions">
               <div class="cond">
                 <div class="time">${dayLabel}</div>
@@ -565,17 +573,16 @@
         `;
       }).join("");
 
-      // Main answer – prefer the local day or night column when location is known
+      // Main answer – prefer local day/night column; ignore CB & 6m for the headline
       const goodBands = [];
-      order.forEach(key => {
-        if (key === "6m" || key === "11m-CB") return; // optional in summary
-        const b = data.bands[key] || {};
+      individual.forEach(b => {
+        if (b.special === "cb" || b.special === "6m") return;
         const relevant = (isLocalDay === null)
           ? ((b.day || "").toLowerCase() === "good" || (b.night || "").toLowerCase() === "good")
           : (isLocalDay
               ? (b.day || "").toLowerCase() === "good"
               : (b.night || "").toLowerCase() === "good");
-        if (relevant) goodBands.push(labels[key]);
+        if (relevant) goodBands.push(b.label);
       });
 
       const answerEl = document.getElementById("main-answer");
@@ -592,9 +599,8 @@
         detailEl.textContent = "Mainly on " + goodBands[0] +
           (isLocalDay !== null ? (isLocalDay ? " (day)" : " (night)") : "");
       } else {
-        const fairCount = order.filter(key => {
-          if (key === "6m" || key === "11m-CB") return false;
-          const b = data.bands[key] || {};
+        const fairCount = individual.filter(b => {
+          if (b.special === "cb" || b.special === "6m") return false;
           const relevant = (isLocalDay === null)
             ? ((b.day || "").toLowerCase() === "fair" || (b.night || "").toLowerCase() === "fair")
             : (isLocalDay
