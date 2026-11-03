@@ -330,6 +330,29 @@
     .forecast-day .fd-icon { font-size: 1.1rem; margin-bottom: 2px; }
     .forecast-day .fd-hi { font-weight: 700; }
     .forecast-day .fd-lo { color: var(--muted); }
+
+    .clothing-tip {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(56, 189, 248, 0.08);
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+    .clothing-tip.beach-yes {
+      background: rgba(34, 197, 94, 0.12);
+      border-color: rgba(34, 197, 94, 0.35);
+    }
+    .clothing-tip.beach-no {
+      background: rgba(234, 179, 8, 0.1);
+      border-color: rgba(234, 179, 8, 0.3);
+    }
+    .clothing-tip.beach-cold {
+      background: rgba(148, 163, 184, 0.12);
+      border-color: rgba(148, 163, 184, 0.3);
+    }
+    .clothing-tip .ct-title { font-weight: 700; margin-bottom: 4px; }
   </style>
 </head>
 <body>
@@ -383,6 +406,8 @@
           <div class="sm-value" id="wx-moon">—</div>
         </div>
       </div>
+      <div id="clothing-tip" class="clothing-tip" style="display:none"></div>
+
       <div class="section-title" style="margin-top:14px;margin-bottom:6px">7-Day Forecast</div>
       <div class="forecast-row" id="forecast-row">
         <div class="forecast-day"><div class="fd-name">—</div></div>
@@ -576,13 +601,30 @@
     }
 
     // ---------- Clocks ----------
+    // Uses the phone's system timezone (respects Canada's 2026 permanent-time changes
+    // in BC, AB, MB, SK, YT, NT when the device is set correctly).
     function pad(n) { return String(n).padStart(2, "0"); }
     function tickClocks() {
       const now = new Date();
       document.getElementById("local-clock").textContent =
         pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+
+      let tzName = "";
+      try {
+        tzName = Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+          .formatToParts(now)
+          .find(p => p.type === "timeZoneName")?.value || "";
+      } catch (e) {}
+      const offsetMin = -now.getTimezoneOffset();
+      const sign = offsetMin >= 0 ? "+" : "-";
+      const oh = pad(Math.floor(Math.abs(offsetMin) / 60));
+      const om = pad(Math.abs(offsetMin) % 60);
+      const offsetStr = "UTC" + sign + oh + (om !== "00" ? ":" + om : "");
+
       document.getElementById("local-date").textContent =
-        now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+        now.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) +
+        (tzName ? " · " + tzName : "") + " · " + offsetStr;
+
       document.getElementById("utc-clock").textContent =
         pad(now.getUTCHours()) + ":" + pad(now.getUTCMinutes()) + ":" + pad(now.getUTCSeconds());
       document.getElementById("utc-date").textContent =
@@ -633,6 +675,67 @@
       return pad(d.getHours()) + ":" + pad(d.getMinutes());
     }
 
+    function renderClothingTip(tempC, feelsC, code, windKmh) {
+      const el = document.getElementById("clothing-tip");
+      if (!el) return;
+      const t = typeof feelsC === "number" ? feelsC : tempC;
+      const rainy = [51,53,55,61,63,65,80,81,82,95,96,99].includes(code);
+      const snowy = [71,73,75,77,85,86].includes(code);
+      const stormy = [95,96,99].includes(code);
+      const foggy = [45,48].includes(code);
+      const windy = (windKmh || 0) >= 40;
+
+      let cls = "beach-no";
+      let title = "";
+      let body = "";
+
+      if (stormy) {
+        cls = "beach-cold";
+        title = "⚡ Not beach weather — stay inland";
+        body = "Thunderstorms in the area. Avoid open water and beaches. Wear a waterproof jacket and solid shoes.";
+      } else if (snowy) {
+        cls = "beach-cold";
+        title = "❄️ Beach wear? No";
+        body = "Snow conditions. Bundle up: winter coat, gloves, hat, and boots. Skip the beach.";
+      } else if (t >= 26 && !rainy) {
+        cls = "beach-yes";
+        title = "🏖️ Beach wear looks good";
+        body = "Warm enough for swimsuit, shorts, and sandals. Bring sunscreen, a hat, and water" +
+          (windy ? ". It’s breezy — a light cover-up helps." : ".");
+      } else if (t >= 22 && !rainy) {
+        cls = "beach-yes";
+        title = "🌤️ Light beach wear is fine";
+        body = "Shorts or a light dress, T-shirt, and sandals work. Optional light sweater for later. Sunscreen recommended.";
+      } else if (t >= 18) {
+        cls = "beach-no";
+        title = rainy ? "🌧️ Skip the beach — cool & wet" : "👕 Not quite beach weather";
+        body = rainy
+          ? "Cool and rainy. Wear a light waterproof jacket, long pants or jeans, and closed shoes."
+          : "Mild. Long pants or jeans, a T-shirt or light sweater, and sneakers. A light jacket is handy if the wind picks up.";
+      } else if (t >= 10) {
+        cls = "beach-no";
+        title = "🧥 Beach wear not recommended";
+        body = "Cool out. Layer up: sweater or fleece, long pants, closed shoes" +
+          (rainy ? ", and a waterproof outer layer." : ".");
+      } else if (t >= 0) {
+        cls = "beach-cold";
+        title = "🥶 Cold — no beach wear";
+        body = "Wear a warm coat, layers underneath, gloves, and a hat. Waterproof shoes if it’s wet.";
+      } else {
+        cls = "beach-cold";
+        title = "🥶 Freezing — stay warm";
+        body = "Heavy winter coat, insulated layers, gloves, scarf, and winter boots. Beach is off the list today.";
+      }
+
+      if (foggy && t >= 10 && t < 22) {
+        body += " Foggy — drive carefully and keep an outer layer handy.";
+      }
+
+      el.className = "clothing-tip " + cls;
+      el.innerHTML = `<div class="ct-title">${title}</div>${body}`;
+      el.style.display = "block";
+    }
+
     async function loadWeather() {
       if (userLat === null || userLon === null) return;
       try {
@@ -641,7 +744,7 @@
           "&longitude=" + userLon.toFixed(4) +
           "&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature" +
           "&daily=weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset" +
-          "&temperature_unit=fahrenheit&wind_speed_unit=mph" +
+          "&temperature_unit=celsius&wind_speed_unit=kmh" +
           "&timezone=auto&forecast_days=7";
 
         const res = await fetch(url);
@@ -653,12 +756,20 @@
         const [desc, icon] = wxInfo(cur.weather_code);
 
         document.getElementById("wx-icon").textContent = icon;
-        document.getElementById("wx-temp").textContent = Math.round(cur.temperature_2m) + "°F";
+        document.getElementById("wx-temp").textContent = Math.round(cur.temperature_2m) + "°C";
         document.getElementById("wx-desc").textContent = desc;
         document.getElementById("wx-meta").innerHTML =
-          `<span>Feels <strong>${Math.round(cur.apparent_temperature)}°F</strong></span>` +
+          `<span>Feels <strong>${Math.round(cur.apparent_temperature)}°C</strong></span>` +
           `<span>Humidity <strong>${cur.relative_humidity_2m}%</strong></span>` +
-          `<span>Wind <strong>${Math.round(cur.wind_speed_10m)} mph</strong></span>`;
+          `<span>Wind <strong>${Math.round(cur.wind_speed_10m)} km/h</strong></span>`;
+
+        // Beach / clothing tip
+        renderClothingTip(
+          cur.temperature_2m,
+          cur.apparent_temperature,
+          cur.weather_code,
+          cur.wind_speed_10m
+        );
 
         // Today's sunrise/sunset
         document.getElementById("wx-sunrise").textContent = fmtTimeISO(daily.sunrise && daily.sunrise[0]);
