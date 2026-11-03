@@ -507,6 +507,43 @@
       return sinElev > -0.0145; // ~ -0.83° civil twilight approx
     }
 
+    let baseLayer = null;
+    let mapIsNight = null; // track current style so we don't rebuild unnecessarily
+
+    function dayTileLayer() {
+      return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+        maxZoom: 19
+      });
+    }
+
+    // NASA VIIRS Black Marble city lights via GIBS (no API key)
+    // Classic Earth-at-night composite from Suomi NPP VIIRS Day/Night Band
+    function nightTileLayer() {
+      return L.tileLayer(
+        "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg",
+        {
+          attribution: 'NASA VIIRS Black Marble · <a href="https://earthdata.nasa.gov/gibs">GIBS</a>',
+          maxZoom: 8,
+          maxNativeZoom: 8,
+          tileSize: 256,
+          bounds: [[-85.0511, -180], [85.0511, 180]]
+        }
+      );
+    }
+
+    function setMapStyle(night) {
+      if (!map) return;
+      if (mapIsNight === night && baseLayer) return; // already correct
+
+      if (baseLayer) {
+        map.removeLayer(baseLayer);
+      }
+      baseLayer = night ? nightTileLayer() : dayTileLayer();
+      baseLayer.addTo(map);
+      mapIsNight = night;
+    }
+
     function initMap() {
       if (map) return;
       const el = document.getElementById("map");
@@ -517,13 +554,9 @@
         attributionControl: true
       }).setView([25, 0], 2);
 
-      // Free OpenStreetMap tiles – no API key required
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-        maxZoom: 19
-      }).addTo(map);
+      // Default to day until we know local day/night
+      setMapStyle(false);
 
-      // Fix blank map (common when container size is calculated too early)
       setTimeout(() => { map.invalidateSize(); }, 200);
       setTimeout(() => { map.invalidateSize(); }, 800);
     }
@@ -532,7 +565,12 @@
       if (!map) initMap();
       if (userLat === null || userLon === null) return;
 
-      map.setView([userLat, userLon], 7);
+      // NASA VIIRS city lights when local night, normal map when day
+      setMapStyle(isLocalDay === false);
+
+      // Night layer maxes at zoom 8; day can go higher
+      const zoom = isLocalDay === false ? 6 : 7;
+      map.setView([userLat, userLon], zoom);
       map.invalidateSize();
 
       if (marker) {
@@ -550,10 +588,9 @@
       marker.bindPopup(
         `<strong>${userGrid || "Your location"}</strong><br>` +
         `${userLat.toFixed(4)}°, ${userLon.toFixed(4)}°<br>` +
-        (isLocalDay ? "Local Day" : "Local Night")
+        (isLocalDay ? "Local Day · street map" : "Local Night · NASA VIIRS city lights")
       ).openPopup();
 
-      // One more size fix after moving
       setTimeout(() => { map.invalidateSize(); }, 100);
     }
 
