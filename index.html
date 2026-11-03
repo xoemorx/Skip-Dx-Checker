@@ -556,7 +556,8 @@
     let baseLayer = null;
     let overlayLayer = null;   // streets / borders on top
     let aircraftLayer = null;  // OpenSky aircraft markers
-    let mapIsNight = null;
+    let terminatorLayer = null;
+    let terminatorTimer = null;
     let aircraftTimer = null;
 
     function dayTileLayer() {
@@ -566,20 +567,6 @@
       });
     }
 
-    // NASA VIIRS Black Marble city lights via GIBS
-    function nightTileLayer() {
-      return L.tileLayer(
-        "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_CityLights_2012/default/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpg",
-        {
-          attribution: 'NASA VIIRS Black Marble · <a href="https://earthdata.nasa.gov/gibs">GIBS</a>',
-          maxZoom: 8,
-          maxNativeZoom: 8,
-          tileSize: 256,
-          bounds: [[-85.0511, -180], [85.0511, 180]]
-        }
-      );
-    }
-
     // Streets / borders / place names – Esri reference layers (no API key)
     function ensureOverlay() {
       if (!map) return;
@@ -587,44 +574,79 @@
         map.removeLayer(overlayLayer);
         overlayLayer = null;
       }
-      // Layer group so we can stack borders + roads on top of base/VIIRS
       overlayLayer = L.layerGroup();
 
-      // Country/state borders + place labels
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-        {
-          attribution: "Esri",
-          maxZoom: 19,
-          opacity: 0.9
-        }
+        { attribution: "Esri", maxZoom: 19, opacity: 0.9 }
       ).addTo(overlayLayer);
 
-      // Major roads / transportation
       L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}",
-        {
-          attribution: "Esri",
-          maxZoom: 19,
-          opacity: 0.75
-        }
+        { attribution: "Esri", maxZoom: 19, opacity: 0.75 }
       ).addTo(overlayLayer);
 
       overlayLayer.addTo(map);
     }
 
-    function setMapStyle(night) {
-      if (!map) return;
-      if (mapIsNight === night && baseLayer) {
-        ensureOverlay();
-        return;
+    // ----- Solar terminator (day / night divide) -----
+    function subsolarPoint(date = new Date()) {
+      const rad = Math.PI / 180;
+      const start = Date.UTC(date.getUTCFullYear(), 0, 0);
+      const dayOfYear = (date.getTime() - start) / 86400000;
+      // Solar declination (degrees)
+      const decl = 23.44 * Math.sin(rad * (360 / 365.242) * (dayOfYear - 81));
+      // Equation of time (minutes)
+      const B = rad * (360 / 365.242) * (dayOfYear - 81);
+      const EoT = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
+      const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+      // Longitude where sun is overhead
+      const lon = ((utcH - 12 + EoT / 60) * -15);
+      const normLon = ((lon + 540) % 360) - 180;
+      return { lat: decl, lon: normLon };
+    }
+
+    function terminatorNightRings(date = new Date()) {
+      // Night-side polygon: terminator line closed via the night pole
+      const sun = subsolarPoint(date);
+      const rad = Math.PI / 180;
+      const deg = 180 / Math.PI;
+      const sunLatR = sun.lat * rad;
+      const coords = [];
+
+      for (let lon = -180; lon <= 180; lon += 2) {
+        const H = (lon - sun.lon) * rad;
+        let lat;
+        if (Math.abs(sun.lat) < 0.05) {
+          lat = 0;
+        } else {
+          // Elevation = 0 → tan(lat) = -cos(H) / tan(declination)
+          lat = Math.atan2(-Math.cos(H), Math.tan(sunLatR)) * deg;
+          lat = Math.max(-89.5, Math.min(89.5, lat));
+        }
+        coords.push([lat, lon]);
       }
 
-      if (baseLayer) map.removeLayer(baseLayer);
-      baseLayer = night ? nightTileLayer() : dayTileLayer();
-      baseLayer.addTo(map);
-      mapIsNight = night;
-      ensureOverlay();
+      // Night includes the pole opposite the sun
+      const nightPole = sun.lat >= 0 ? -89.5 : 89.5;
+      return coords.concat([[nightPole, 180], [nightPole, -180]]);
+    }
+
+    function updateTerminator() {
+      if (!map) return;
+      const polyCoords = terminatorNightRings(new Date());
+      if (terminatorLayer) {
+        terminatorLayer.setLatLngs(polyCoords);
+      } else {
+        terminatorLayer = L.polygon(polyCoords, {
+          color: "#0f172a",
+          weight: 1,
+          opacity: 0.35,
+          fillColor: "#020617",
+          fillOpacity: 0.45,
+          interactive: false
+        }).addTo(map);
+      }
     }
 
     function initMap() {
@@ -634,12 +656,19 @@
 
       map = L.map("map", {
         zoomControl: true,
-        attributionControl: true
+        attributionControl: true,
+        worldCopyJump: true
       }).setView([25, 0], 2);
 
-      aircraftLayer = L.layerGroup().addTo(map);
+      // Always use day street map as base — terminator shows night side
+      baseLayer = dayTileLayer();
+      baseLayer.addTo(map);
+      ensureOverlay();
 
-      setMapStyle(false);
+      aircraftLayer = L.layerGroup().addTo(map);
+      updateTerminator();
+      if (terminatorTimer) clearInterval(terminatorTimer);
+      terminatorTimer = setInterval(updateTerminator, 60 * 1000);
 
       setTimeout(() => { map.invalidateSize(); }, 200);
       setTimeout(() => { map.invalidateSize(); }, 800);
@@ -649,10 +678,9 @@
       if (!map) initMap();
       if (userLat === null || userLon === null) return;
 
-      setMapStyle(isLocalDay === false);
+      updateTerminator();
 
-      const zoom = isLocalDay === false ? 6 : 7;
-      map.setView([userLat, userLon], zoom);
+      map.setView([userLat, userLon], 6);
       map.invalidateSize();
 
       if (marker) {
@@ -670,7 +698,7 @@
       marker.bindPopup(
         `<strong>${userGrid || "Your location"}</strong><br>` +
         `${userLat.toFixed(4)}°, ${userLon.toFixed(4)}°<br>` +
-        (isLocalDay ? "Local Day · street map" : "Local Night · NASA VIIRS + streets")
+        (isLocalDay ? "Local Day" : "Local Night") + " · solar terminator active"
       ).openPopup();
 
       setTimeout(() => { map.invalidateSize(); }, 100);
