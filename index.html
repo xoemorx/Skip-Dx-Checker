@@ -590,60 +590,73 @@
     }
 
     // ----- Solar terminator (day / night divide) -----
-    function subsolarPoint(date = new Date()) {
+    function julianSun(date) {
+      // Subsolar longitude & latitude (degrees)
       const rad = Math.PI / 180;
-      const start = Date.UTC(date.getUTCFullYear(), 0, 0);
-      const dayOfYear = (date.getTime() - start) / 86400000;
-      // Solar declination (degrees)
-      const decl = 23.44 * Math.sin(rad * (360 / 365.242) * (dayOfYear - 81));
-      // Equation of time (minutes)
-      const B = rad * (360 / 365.242) * (dayOfYear - 81);
-      const EoT = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B);
-      const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
-      // Longitude where sun is overhead
-      const lon = ((utcH - 12 + EoT / 60) * -15);
-      const normLon = ((lon + 540) % 360) - 180;
-      return { lat: decl, lon: normLon };
+      const ms = date.getTime();
+      const jc = (ms / 86400000 - 10957.5) / 36525; // centuries since J2000
+      const L = (280.460 + 36000.770 * jc) % 360;
+      const g = ((357.528 + 35999.050 * jc) % 360) * rad;
+      const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+      const epsilon = (23.439 - 0.0000004 * jc) * rad;
+      const alpha = Math.atan2(Math.cos(epsilon) * Math.sin(lambda), Math.cos(lambda));
+      const delta = Math.asin(Math.sin(epsilon) * Math.sin(lambda));
+      const gmst = (18.697374558 + 24.06570982441908 * (ms / 86400000 - 10957.5)) % 24;
+      let sunLon = -((gmst * 15 + (alpha * 180) / Math.PI) % 360);
+      if (sunLon < -180) sunLon += 360;
+      if (sunLon > 180) sunLon -= 360;
+      return { lon: sunLon, lat: (delta * 180) / Math.PI };
     }
 
-    function terminatorNightRings(date = new Date()) {
-      // Night-side polygon: terminator line closed via the night pole
-      const sun = subsolarPoint(date);
+    function terminatorLatLngs(date = new Date()) {
+      const sun = julianSun(date);
       const rad = Math.PI / 180;
-      const deg = 180 / Math.PI;
-      const sunLatR = sun.lat * rad;
-      const coords = [];
-
-      for (let lon = -180; lon <= 180; lon += 2) {
-        const H = (lon - sun.lon) * rad;
+      const resolution = 2;
+      const lats = [];
+      for (let lon = -180; lon <= 180; lon += resolution) {
+        const tau = (lon - sun.lon) * rad;
         let lat;
-        if (Math.abs(sun.lat) < 0.05) {
+        if (Math.abs(sun.lat) < 0.01) {
           lat = 0;
         } else {
-          // Elevation = 0 → tan(lat) = -cos(H) / tan(declination)
-          lat = Math.atan2(-Math.cos(H), Math.tan(sunLatR)) * deg;
-          lat = Math.max(-89.5, Math.min(89.5, lat));
+          lat = Math.atan(-Math.cos(tau) / Math.tan(sun.lat * rad)) / rad;
+          lat = Math.max(-85, Math.min(85, lat));
         }
-        coords.push([lat, lon]);
+        lats.push(lat);
       }
-
-      // Night includes the pole opposite the sun
-      const nightPole = sun.lat >= 0 ? -89.5 : 89.5;
-      return coords.concat([[nightPole, 180], [nightPole, -180]]);
+      // Close polygon via the night pole (north is dark when sun is in southern hemisphere)
+      const northDark = sun.lat < 0;
+      const coords = [];
+      for (let i = 0; i < lats.length; i++) {
+        coords.push([lats[i], -180 + i * resolution]);
+      }
+      if (northDark) {
+        coords.push([85, 180], [85, -180]);
+      } else {
+        coords.push([-85, 180], [-85, -180]);
+      }
+      return coords;
     }
 
     function updateTerminator() {
       if (!map) return;
-      const polyCoords = terminatorNightRings(new Date());
+      const coords = terminatorLatLngs(new Date());
       if (terminatorLayer) {
-        terminatorLayer.setLatLngs(polyCoords);
+        terminatorLayer.setLatLngs(coords);
+        terminatorLayer.bringToFront();
       } else {
-        terminatorLayer = L.polygon(polyCoords, {
-          color: "#0f172a",
-          weight: 1,
-          opacity: 0.35,
-          fillColor: "#020617",
-          fillOpacity: 0.45,
+        if (!map.getPane("terminatorPane")) {
+          map.createPane("terminatorPane");
+          map.getPane("terminatorPane").style.zIndex = 450;
+          map.getPane("terminatorPane").style.pointerEvents = "none";
+        }
+        terminatorLayer = L.polygon(coords, {
+          pane: "terminatorPane",
+          color: "#334155",
+          weight: 1.5,
+          opacity: 0.9,
+          fillColor: "#0b1220",
+          fillOpacity: 0.58,
           interactive: false
         }).addTo(map);
       }
@@ -658,9 +671,8 @@
         zoomControl: true,
         attributionControl: true,
         worldCopyJump: true
-      }).setView([25, 0], 2);
+      }).setView([20, 0], 2);
 
-      // Always use day street map as base — terminator shows night side
       baseLayer = dayTileLayer();
       baseLayer.addTo(map);
       ensureOverlay();
@@ -670,8 +682,8 @@
       if (terminatorTimer) clearInterval(terminatorTimer);
       terminatorTimer = setInterval(updateTerminator, 60 * 1000);
 
-      setTimeout(() => { map.invalidateSize(); }, 200);
-      setTimeout(() => { map.invalidateSize(); }, 800);
+      setTimeout(() => { map.invalidateSize(); updateTerminator(); }, 200);
+      setTimeout(() => { map.invalidateSize(); updateTerminator(); }, 800);
     }
 
     function updateMap() {
