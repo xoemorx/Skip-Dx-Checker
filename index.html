@@ -552,13 +552,7 @@
       const g1210 = data.bands["12m-10m"] || {};
       const g6m   = data.bands["6m"] || {};
 
-      // Prefer local day or night rating for the main color when location is known
-      function pick(day, night) {
-        if (isLocalDay === true) return day || night || "—";
-        if (isLocalDay === false) return night || day || "—";
-        return day || night || "—";
-      }
-
+      // Match OpenHamClock tiles: main color = Day rating; Night as subtitle when different
       const individual = [
         { key: "160m", label: "160m", day: g8040.day, night: g8040.night },
         { key: "80m",  label: "80m",  day: g8040.day, night: g8040.night },
@@ -575,10 +569,10 @@
       ];
 
       document.getElementById("bands").innerHTML = individual.map(b => {
-        const main = pick(b.day, b.night);
+        const main = b.day || b.night || "—";  // Day first — same as OpenHamClock
         const cls = badgeClass(main);
-        const nightNote = b.night && b.day !== b.night
-          ? `N: ${(b.night || "—").toUpperCase()}`
+        const nightNote = b.night && String(b.day || "").toLowerCase() !== String(b.night || "").toLowerCase()
+          ? `Night: ${(b.night || "—").toUpperCase()}`
           : "";
         return `
           <div class="band-tile ${cls}">
