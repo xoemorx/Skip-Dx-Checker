@@ -92,6 +92,48 @@
       cursor: pointer;
       white-space: nowrap;
     }
+    .grid-input-row {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .grid-input-row input {
+      flex: 1;
+      min-width: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    .grid-input-row input::placeholder {
+      color: var(--muted);
+      text-transform: none;
+      letter-spacing: normal;
+    }
+    .grid-input-row input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .grid-input-row button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--accent);
+      padding: 6px 10px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .grid-input-row button.primary {
+      background: rgba(56, 189, 248, 0.15);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
 
     /* Map + bands side-by-side */
     .map-bands-row {
@@ -474,7 +516,11 @@
         <div class="grid" id="grid-display">Locating…</div>
         <div class="local-time" id="local-status">Requesting permission</div>
       </div>
-      <button onclick="requestLocation(true)">Locate</button>
+      <button onclick="requestLocation(true)">GPS</button>
+    </div>
+    <div class="grid-input-row">
+      <input type="text" id="grid-input" maxlength="8" placeholder="Grid e.g. EN19 or EN19ox" autocomplete="off" spellcheck="false" />
+      <button type="button" class="primary" onclick="applyManualGrid()">Set grid</button>
     </div>
 
     <!-- Map ~40% screen height + bands on the side -->
@@ -578,6 +624,55 @@
       const lonSquare = Math.floor((adjLon % 20) / 2);
       const latSquare = Math.floor(adjLat % 10);
       return lonField + latField + lonSquare + latSquare;
+    }
+
+    // Maidenhead → center lat/lon (supports 4 or 6 character grids)
+    function gridToLatLon(grid) {
+      if (!grid) return null;
+      const g = String(grid).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (g.length < 4) return null;
+      const lonField = g.charCodeAt(0) - 65;
+      const latField = g.charCodeAt(1) - 65;
+      const lonSquare = parseInt(g.charAt(2), 10);
+      const latSquare = parseInt(g.charAt(3), 10);
+      if (lonField < 0 || lonField > 17 || latField < 0 || latField > 17) return null;
+      if (isNaN(lonSquare) || isNaN(latSquare) || lonSquare > 9 || latSquare > 9) return null;
+
+      let lon = -180 + lonField * 20 + lonSquare * 2;
+      let lat = -90 + latField * 10 + latSquare * 1;
+      // Center of 4-char square
+      let lonW = 2, latH = 1;
+
+      if (g.length >= 6) {
+        const lonSub = g.charCodeAt(4) - 65; // a-x → 0-23
+        const latSub = g.charCodeAt(5) - 65;
+        if (lonSub < 0 || lonSub > 23 || latSub < 0 || latSub > 23) return null;
+        lonW = 2 / 24;
+        latH = 1 / 24;
+        lon += lonSub * lonW;
+        lat += latSub * latH;
+      }
+      // Return center of the square
+      return { lat: lat + latH / 2, lon: lon + lonW / 2, grid: g.length >= 6 ? g.slice(0, 6) : g.slice(0, 4) };
+    }
+
+    function applyManualGrid() {
+      const input = document.getElementById("grid-input");
+      const raw = (input && input.value) || "";
+      const parsed = gridToLatLon(raw);
+      if (!parsed) {
+        document.getElementById("local-status").textContent =
+          "Invalid grid — try EN19 or EN19ox";
+        return;
+      }
+      userLat = parsed.lat;
+      userLon = parsed.lon;
+      userGrid = parsed.grid;
+      isLocalDay = isDayAt(userLat, userLon);
+      if (input) input.value = userGrid;
+      try { localStorage.setItem("skipGrid", userGrid); } catch (e) {}
+      updateLocationUI();
+      if (window.lastData) render(window.lastData);
     }
 
     // Approximate solar elevation / day-night at location
@@ -856,8 +951,8 @@
         updateMap();
         loadWeather();
       } else {
-        gridEl.textContent = "Location unknown";
-        statusEl.textContent = "Tap Locate or allow permission";
+        gridEl.textContent = "No location";
+        statusEl.textContent = "Enter a grid or use GPS";
       }
     }
 
@@ -876,14 +971,20 @@
           userLon = pos.coords.longitude;
           userGrid = latLonToGrid(userLat, userLon);
           isLocalDay = isDayAt(userLat, userLon);
+          try { localStorage.setItem("skipGrid", userGrid); } catch (e) {}
+          const gi = document.getElementById("grid-input");
+          if (gi) gi.value = userGrid;
           updateLocationUI();
           if (window.lastData) render(window.lastData);
         },
         (err) => {
-          userLat = userLon = userGrid = null;
-          isLocalDay = null;
-          document.getElementById("grid-display").textContent = "Location denied";
-          document.getElementById("local-status").textContent = err.message || "Permission denied";
+          // Keep any existing manual grid; only clear if nothing set
+          if (!userGrid) {
+            userLat = userLon = userGrid = null;
+            isLocalDay = null;
+            document.getElementById("grid-display").textContent = "GPS denied";
+            document.getElementById("local-status").textContent = "Enter a grid square below";
+          }
         },
         { enableHighAccuracy: false, timeout: 10000, maximumAge: force ? 0 : 300000 }
       );
@@ -1511,13 +1612,35 @@
     window.addEventListener("resize", () => {
       if (map) setTimeout(() => map.invalidateSize(), 100);
     });
+    // Enter key submits manual grid
+    (function () {
+      const inp = document.getElementById("grid-input");
+      if (inp) {
+        inp.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            applyManualGrid();
+          }
+        });
+      }
+    })();
     // Show moon even before location
     (function () {
       const m = moonPhase();
       document.getElementById("wx-moon").textContent =
         m.icon + " " + (m.waxWane ? m.waxWane : m.name.replace(" Moon", ""));
     })();
-    requestLocation();
+    // Prefer saved manual grid; otherwise try GPS
+    (function () {
+      let saved = null;
+      try { saved = localStorage.getItem("skipGrid"); } catch (e) {}
+      if (saved && gridToLatLon(saved)) {
+        document.getElementById("grid-input").value = saved;
+        applyManualGrid();
+      } else {
+        requestLocation();
+      }
+    })();
     loadData();
     setInterval(loadData, 30 * 60 * 1000);
     setInterval(loadWeather, 30 * 60 * 1000);
