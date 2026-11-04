@@ -7,4 +7,6 @@ I added local time, UTC, weather forecast and moon phase
 
 Also added city night lights during evening hours for the map layout. added a live aircraft tracker on the map overlay, restructured the size of the whole app to show 40% more map
 
+MUF LUF added
+
 Thanks for checking
