@@ -276,7 +276,13 @@
       border-color: var(--border);
       color: var(--muted);
     }
-    .band-tile .sub { display: none; }
+    .band-tile .sub {
+      display: block;
+      font-size: 0.55rem;
+      opacity: 0.75;
+      width: 100%;
+      text-align: right;
+    }
 
     .legend {
       display: flex;
@@ -1261,6 +1267,12 @@
         kindex: get("kindex"),
         sunspots: get("sunspots"),
         xray: get("xray"),
+        muf: get("muf"),
+        muffactor: get("muffactor"),
+        fof2: get("fof2"),
+        geomagField: get("geomagfield"),
+        signalNoise: get("signalnoise"),
+        source: "HamQSL / N0NBH",
         bands,
         vhf
       };
@@ -1330,10 +1342,10 @@
       let bestD = Infinity;
       for (const s of stations) {
         if (!s.station || s.fof2 == null && s.mufd == null) continue;
-        // Skip stale (>6 h) if time present
+        // Prefer fresh readings; allow up to 24 h so sparse regions still work
         if (s.time) {
           const ageH = (Date.now() - new Date(s.time).getTime()) / 3600000;
-          if (ageH > 6) continue;
+          if (ageH > 24 || ageH < 0) continue;
         }
         let slat = parseFloat(s.station.latitude);
         let slon = parseFloat(s.station.longitude);
@@ -1362,31 +1374,45 @@
     async function updateMufLuf(data) {
       const sfi = data && data.solarflux;
       const k = data && data.kindex;
-      const day = isLocalDay !== false; // prefer day if unknown
+      const day = isLocalDay !== false;
       const lat = userLat;
       const lon = userLon;
 
-      let result = estimateMufFromSolar(sfi, k, day, lat);
-      let note = "Estimated from SFI/K · MUF ≈ 3000 km hop";
+      // N0NBH / OpenHamClock often report muf: "NoRpt" — not a numeric value
+      const rawMuf = data && data.muf != null ? String(data.muf).trim() : "";
+      const n0nbhMufNum = parseFloat(rawMuf);
+      const n0nbhHasMuf = rawMuf && !/^norpt$/i.test(rawMuf) && !isNaN(n0nbhMufNum);
 
-      if (lat != null && lon != null) {
+      let result = estimateMufFromSolar(sfi, k, day, lat);
+      let note = "Est. from SFI/K (N0NBH MUF = NoRpt) · ~3000 km";
+
+      if (n0nbhHasMuf) {
+        result.muf = n0nbhMufNum;
+        note = "N0NBH / OpenHamClock MUF";
+      }
+
+      // Prefer nearby ionosonde when N0NBH has no MUF
+      if (!n0nbhHasMuf && lat != null && lon != null) {
         try {
           const iono = await fetchNearestIonosonde(lat, lon);
           if (iono && iono.muf != null && !isNaN(iono.muf)) {
             result.muf = iono.muf;
             if (iono.fof2 != null && !isNaN(iono.fof2)) result.fof2 = iono.fof2;
-            result.source = "ionosonde";
             note = (iono.station || "Ionosonde") +
-              (iono.distanceKm != null ? " · " + iono.distanceKm + " km away" : "") +
-              " · MUF(3000)";
+              (iono.distanceKm != null ? " · " + iono.distanceKm + " km" : "") +
+              " · MUF(3000) · N0NBH NoRpt";
           }
         } catch (e) {
           console.warn("Ionosonde fetch failed", e);
         }
       }
 
+      // foF2 from N0NBH if present
+      const rawFo = data && data.fof2 != null ? String(data.fof2).trim() : "";
+      const foNum = parseFloat(rawFo);
+      if (rawFo && !isNaN(foNum)) result.fof2 = foNum;
+
       result.luf = estimateLuf(k, day);
-      // Keep LUF below MUF
       if (result.luf >= result.muf) result.luf = Math.max(1.5, result.muf * 0.35);
 
       const fmt = (v) => (v == null || isNaN(v) ? "—" : Number(v).toFixed(1) + " MHz");
@@ -1416,7 +1442,9 @@
       const g1210 = data.bands["12m-10m"] || {};
       const g6m   = data.bands["6m"] || {};
 
-      // Match OpenHamClock tiles: main color = Day rating; Night as subtitle when different
+      // Same N0NBH groups OpenHamClock uses (useBandConditions.js BAND_RANGE_MAP)
+      // 80m-40m → 80/60/40 (we also show 160m from that group as extra)
+      // 30m-20m → 30/20, 17m-15m → 17/15, 12m-10m → 12/10 (+ CB)
       const individual = [
         { key: "160m", label: "160m", day: g8040.day, night: g8040.night },
         { key: "80m",  label: "80m",  day: g8040.day, night: g8040.night },
@@ -1432,17 +1460,25 @@
         { key: "6m",   label: "6m",   day: g6m.day,   night: g6m.night }
       ];
 
+      // OpenHamClock main tile = current period (day or night).
+      // Prefer local solar day/night at QTH; fall back to UTC 06–18 like OHC.
+      const periodIsDay = (isLocalDay !== null)
+        ? isLocalDay
+        : (() => { const h = new Date().getUTCHours(); return h >= 6 && h <= 18; })();
+
       document.getElementById("bands").innerHTML = individual.map(b => {
-        const main = b.day || b.night || "—";  // Day first — same as OpenHamClock
+        const main = (periodIsDay ? b.day : b.night) || b.day || b.night || "—";
+        const other = periodIsDay ? b.night : b.day;
+        const otherLabel = periodIsDay ? "N" : "D";
         const cls = badgeClass(main);
-        const nightNote = b.night && String(b.day || "").toLowerCase() !== String(b.night || "").toLowerCase()
-          ? `Night: ${(b.night || "—").toUpperCase()}`
+        const sub = other && String(main || "").toLowerCase() !== String(other || "").toLowerCase()
+          ? `${otherLabel}: ${(other || "—").toUpperCase()}`
           : "";
         return `
           <div class="band-tile ${cls}">
             <div class="band-name">${b.label}</div>
             <div class="band-cond">${(main || "—").toUpperCase()}</div>
-            ${nightNote ? `<div class="sub">${nightNote}</div>` : ""}
+            ${sub ? `<div class="sub">${sub}</div>` : ""}
           </div>
         `;
       }).join("");
@@ -1494,7 +1530,9 @@
       }
 
       document.getElementById("updated").textContent =
-        "Updated: " + (data.updated || "just now") + "  ·  X-ray " + (data.xray || "—");
+        "Updated: " + (data.updated || "just now") +
+        "  ·  X-ray " + (data.xray || "—") +
+        "  ·  " + (data.source || "N0NBH");
 
       document.getElementById("loading").style.display = "none";
       document.getElementById("content").style.display = "block";
@@ -1510,24 +1548,14 @@
       content.style.display = "none";
       errorBox.style.display = "none";
 
-      // Sources tried in order. OpenHamClock JSON first (same N0NBH data),
-      // then HamQSL XML via CORS proxies, then direct XML.
+      // Same feed OpenHamClock uses: /api/n0nbh → N0NBH (HamQSL)
+      const ohc = "https://openhamclock.com/api/n0nbh";
+      const hamqsl = "https://www.hamqsl.com/solarxml.php";
       const sources = [
-        {
-          name: "openhamclock-json",
-          url: "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://openhamclock.com/api/n0nbh"),
-          type: "json"
-        },
-        {
-          name: "hamqsl-proxy",
-          url: "https://api.allorigins.win/raw?url=" + encodeURIComponent("https://www.hamqsl.com/solarxml.php"),
-          type: "xml"
-        },
-        {
-          name: "hamqsl-direct",
-          url: "https://www.hamqsl.com/solarxml.php",
-          type: "xml"
-        }
+        { name: "ohc-direct", url: ohc, type: "json" },
+        { name: "ohc-allorigins", url: "https://api.allorigins.win/raw?url=" + encodeURIComponent(ohc), type: "json" },
+        { name: "hamqsl-direct", url: hamqsl, type: "xml" },
+        { name: "hamqsl-allorigins", url: "https://api.allorigins.win/raw?url=" + encodeURIComponent(hamqsl), type: "xml" }
       ];
 
       let lastError = null;
@@ -1536,13 +1564,10 @@
           const response = await fetch(src.url, { cache: "no-store" });
           if (!response.ok) throw new Error(src.name + " HTTP " + response.status);
           const text = await response.text();
-
-          let data;
-          if (src.type === "json") {
-            data = parseOpenHamClockJSON(text);
-          } else {
-            data = parseXML(text);
-          }
+          // Guard: allorigins can return HTML error pages
+          if (/^\s*</.test(text) && src.type === "json") throw new Error("not json");
+          const data = src.type === "json" ? parseOpenHamClockJSON(text) : parseXML(text);
+          data.fetchSource = src.name;
           render(data);
           errorBox.style.display = "none";
           return;
@@ -1552,16 +1577,18 @@
         }
       }
 
-      // All live sources failed – use current snapshot matching OpenHamClock
+      // Live cross-check failed – snapshot matching current OpenHamClock/N0NBH (04 Nov 2026)
       errorBox.style.display = "block";
-      errorBox.innerHTML = `Live data temporarily unavailable. Showing recent N0NBH snapshot.`;
+      errorBox.innerHTML = `Live fetch failed. Showing N0NBH snapshot aligned with OpenHamClock.`;
       const fallback = {
-        updated: "03 Nov 2026 snapshot (matches OpenHamClock)",
-        solarflux: "97",
-        aindex: "7",
-        kindex: "1",
-        sunspots: "34",
-        xray: "B3.9",
+        updated: "04 Nov 2026 0435 GMT (N0NBH snapshot)",
+        solarflux: "100",
+        aindex: "5",
+        kindex: "2",
+        sunspots: "41",
+        xray: "B4.6",
+        muf: "NoRpt",
+        source: "N0NBH snapshot",
         bands: {
           "80m-40m": { day: "Fair", night: "Good" },
           "30m-20m": { day: "Good", night: "Good" },
@@ -1601,6 +1628,12 @@
         kindex: sd.kIndex || "—",
         sunspots: sd.sunspots || "—",
         xray: sd.xray || "—",
+        muf: sd.muf || null,           // often "NoRpt" from N0NBH
+        muffactor: sd.mufFactor || null,
+        fof2: sd.fof2 || null,
+        geomagField: j.geomagField || null,
+        signalNoise: j.signalNoise || null,
+        source: "OpenHamClock / N0NBH",
         bands
       };
     }
